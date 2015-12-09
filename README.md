@@ -1,3 +1,13 @@
+### Table of Contents
+- **[REDiscover](#REDiscover)**  
+  - **[Methodology](#Methodology)**  
+  - **[Prerequisites](#prerequisites)**  
+  - **[Usage](#usage)**  
+    - **[Parameters](#parameters)**  
+    - **[Test run](#test-run)**  
+  - **[FAQ](#faq)**  
+  - **[Citation](#citation)**  
+
 # REDiscover
 Tool for **R**NA **e**diting **discover**y from NGS data. 
 
@@ -17,9 +27,11 @@ REDiscover reports only regions fulfilling several stringency criteria:
 
 Finally, reads with basecall quality below 20 (0.01 probability of error) for given positiong are ignored. 
 
+## Prerequisites
+
 ## Usage
 
-### Test dataset
+### Test run
 
 ## FAQ
 
