@@ -11,6 +11,7 @@
 # REDiscover
 Tool for **R**NA **e**diting **discover**y from NGS data. 
 
+
 ## Methodology
 
 REDiscover uses internally (samtools mpileup)[http://www.htslib.org/] to genotype genome and transcriptome. 
