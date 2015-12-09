@@ -1,6 +1,6 @@
 ### Table of Contents
-- **[REDiscover](#REDiscover)**  
-  - **[Methodology](#Methodology)**  
+- **[REDiscover](#rediscover)**  
+  - **[Methodology](#methodology)**  
   - **[Prerequisites](#prerequisites)**  
   - **[Usage](#usage)**  
     - **[Parameters](#parameters)**  
