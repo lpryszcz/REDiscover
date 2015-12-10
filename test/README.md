@@ -5,3 +5,15 @@ To run the test example, execute:
 ./REDiscover -d test/DNA.bam -r test/RNA.bam
 ```
 
+
+**Table of contents**  
+- [Generation of test set](#Generation-of-test-set)
+  - [Redundans pipeline](#redundans-pipeline)
+- [Accuracy estimation](#accuracy-estimation)
+
+
+## Generation of test set
+
+
+
+## Accuracy estimation
