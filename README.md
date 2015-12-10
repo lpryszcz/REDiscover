@@ -1,4 +1,6 @@
-### Table of Contents
+# REDiscover
+Tool for **R**NA **e**diting **discover**y from NGS data.
+
 - **[REDiscover](#rediscover)**  
   - **[Methodology](#methodology)**  
   - **[Prerequisites](#prerequisites)**  
@@ -6,10 +8,7 @@
     - **[Parameters](#parameters)**  
     - **[Test run](#test-run)**  
   - **[FAQ](#faq)**  
-  - **[Citation](#citation)**  
-
-# REDiscover
-Tool for **R**NA **e**diting **discover**y from NGS data. 
+  - **[Citation](#citation)** 
 
 ## Methodology
 
@@ -23,7 +22,7 @@ so it can be run even on then laptop
 - **reliable** - the tools was tested extensively on vertebrates (_D. rerio_) 
 
 
-By default, REDiscover filters 
+By default, REDiscover filters: 
 - QC failed reads
 - duplicates
 - reads with mapping quality (mapQ) below 15 
@@ -47,7 +46,7 @@ REDiscover input consists of **aligned NGS reads** (BAM) from genome(s) and tran
 REDiscover will return a list of putative **RNA editign sites**. In addition, ... 
 
 ### Parameters
-Most of REDiscover parameteers can be adjusted manually (default values are given in square brackets []):  
+Most of REDiscover parameters can be adjusted manually (default values are given in square brackets []):  
 ```
   -h, --help            show this help message and exit
   -v, --verbose         verbose
@@ -84,4 +83,4 @@ For more details have a look in [test directory](/test).
 ## FAQ
 
 ## Citation
-Pryszcz LP, Botchler M, Winata CL (In preparation) Detection of RNA editing from NGS. 
+Pryszcz LP, Bochtler M, Winata CL. (In preparation) Detection of RNA editing from NGS. 
