@@ -20,7 +20,7 @@ REDiscover is:
 - **fast** & **lightweight**, multi-core support and memory-optimised, 
 so it can be run even on then laptop
 - **flexible** toward many sequencing technologies and experimental designs ie. stranded and unstranded RNA-Seq, multiple genomes and/or transcriptomes are accepted as input
-- **reliable** - the tools was tested extensively on vertebrates (D. rerio) 
+- **reliable** - the tools was tested extensively on vertebrates (_D. rerio_) 
 
 
 By default, REDiscover filters 
