@@ -80,6 +80,11 @@ To run the test example, execute:
 
 For more details have a look in [test directory](/test). 
 
+## Tools
+Along with REDiscover, we provide a bunch of usefull tools for RNA editing characterisation.
+More details about these can be find in [tools directory](/tools). 
+
+
 ## FAQ
 
 ## Citation
