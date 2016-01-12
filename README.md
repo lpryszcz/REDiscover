@@ -33,7 +33,7 @@ REDiscover reports only regions fulfilling several stringency criteria:
 
 Finally, reads with basecall quality below 20 (0.01 probability of error) for given positiong are ignored. 
 
-For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf).
+[//]: # For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf).
 
 ![Flowchart](/docs/flowchart.png)
 
