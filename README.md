@@ -43,7 +43,7 @@ Finally, reads with basecall quality below 20 (0.01 probability of error) for gi
 
 ## Usage
 REDiscover input consists of **aligned NGS reads** (BAM) from genome(s) and transcriptomes(s).
-REDiscover will return a list of putative **RNA editign sites**. In addition, ... 
+REDiscover will return a list of putative **RNA editign sites**. 
 
 ### Parameters
 Most of REDiscover parameters can be adjusted manually (default values are given in square brackets []):  
