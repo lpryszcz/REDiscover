@@ -111,7 +111,7 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
     #open subprocess
     args = ['samtools', 'mpileup']
     if region:
-        args.append('-r %s:1-100000'%region)
+        args += ['-r', '%s'%region]
     if not dna:
         args += ["-f", fasta]
     args += mpileup_opts.split() + dna + rna 
@@ -175,15 +175,13 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
                cov, meanQ, freqs.pop())
 
 def init_args(*args):
-    global c2i, bufferSize, ivals, maxp, pref
-    c2i, bufferSize = args
-    # keep info about intervals, max position and current reference
-    ivals, maxp, pref = [], 0, 0
+    dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose = args
+    global dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
     
 def worker(args):
     """Count overlapping intervals with given read alignment.
     The algorithm support spliced alignments. """
-    #global c2i, bufferSize, ivals, maxp, pref
+    global dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
     region = args[0]
     totdata = []
     for data in parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
@@ -191,7 +189,7 @@ def worker(args):
         totdata.append(data)
     return totdata
 
-def bam2regions(bam, step=1e6):
+def bam2regions(bam, step=1e7):
     """Return chromosome names from BAM file"""
     regions = []
     cmd = "samtools view -H %s"%bam
@@ -252,10 +250,10 @@ def main():
             o.output.write(info%data)
     else:
         # get chromosomes
-        names, lengths = bam2chromosomes(o.rna[0]); print names
+        regions = bam2regions(o.rna[0])
         # process by chromosome
-        p = Pool(o.threads)#, initializer=init_args, initargs=(c2i, bufferSize))
-        parser = Pool.imap(worker, names) #, chunksize=10000)
+        p = Pool(o.threads, initializer=init_args, initargs=(o.dna, o.rna, o.fasta, o.minDepth, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose))
+        parser = p.imap(worker, regions) #, chunksize=10000)
         for data in parser:
             o.output.write("".join(info%d for d in data))
     
