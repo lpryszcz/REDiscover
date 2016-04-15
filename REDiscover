@@ -19,7 +19,7 @@ l.p.pryszcz@gmail.com
 Warsaw, 21/07/2015
 """
 
-import argparse, os, re, sys
+import commands, os, re, sys
 from datetime import datetime
 import subprocess
 import numpy as np
@@ -205,7 +205,7 @@ def bam2chromosomes(bam):
     return names, lengths
         
 def main():
-
+    import argparse
     usage  = "%(prog)s [options] -b ref.bam *.bam" 
     parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
                                       formatter_class=argparse.RawTextHelpFormatter)
