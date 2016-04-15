@@ -21,6 +21,7 @@ Warsaw, 21/07/2015
 
 import commands, os, re, sys
 from datetime import datetime
+from multiprocessing import Pool
 import subprocess
 import numpy as np
 
