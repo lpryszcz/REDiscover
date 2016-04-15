@@ -191,19 +191,23 @@ def worker(args):
         totdata.append(data)
     return totdata
 
-def bam2chromosomes(bam):
+def bam2regions(bam, step=1e6):
     """Return chromosome names from BAM file"""
-    names, lengths = [], []
+    regions = []
     cmd = "samtools view -H %s"%bam
-    for l in commands.getoutput(cmd):
+    for l in commands.getoutput(cmd).split('\n'):
         # @SQ     SN:1    LN:58871917
         if not l.startswith('@SQ'):
             continue
         head, sname, slen = l.split('\t')
+        slen = int(slen.split(':')[1])
         name = ":".join(sname.split(':')[1:])
-        names.append(name)
-        lengths.append(int(slen.split(':')[1]))
-    return names, lengths
+        for s in xrange(1, slen+1, step):
+            if e>slen:
+                e = slen
+            region = "%s:%s-%s"%(chrom, s, e)
+            regions.append(region)
+    return regions
         
 def main():
     import argparse
@@ -248,7 +252,7 @@ def main():
             o.output.write(info%data)
     else:
         # get chromosomes
-        names, lengths = bam2chromosomes(o.rna[0])
+        names, lengths = bam2chromosomes(o.rna[0]); print names
         # process by chromosome
         p = Pool(o.threads)#, initializer=init_args, initargs=(c2i, bufferSize))
         parser = Pool.imap(worker, names) #, chunksize=10000)
