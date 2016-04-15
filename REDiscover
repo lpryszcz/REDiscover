@@ -2,6 +2,8 @@
 desc="""Identify RNA editing sites. 
  
 CHANGELOG:
+v1.13
+- multithreading support
 v1.12
 - skip alt base calling if less than 3 reads (--minAltReads)
 - -o / --output option added
@@ -10,7 +12,6 @@ v1.11
 
 TBD:
 - rescue major alt haplotype if the other is only very low freq
-- multithreading support
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -104,10 +105,12 @@ def get_meanQ(quals, offset=33):
     return np.mean([ord(q)-offset for q in quals])
     
 def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
-                  mpileup_opts, verbose, bothStrands=0, alphabet='ACGT'):
+                  mpileup_opts, verbose, bothStrands=0, alphabet='ACGT', region=''):
     """Run mpileup subprocess and parse output."""
     #open subprocess
     args = ['samtools', 'mpileup']
+    if region:
+        args.append('-r %s:1-100000'%region)
     if not dna:
         args += ["-f", fasta]
     args += mpileup_opts.split() + dna + rna 
@@ -179,7 +182,27 @@ def init_args(*args):
 def worker(args):
     """Count overlapping intervals with given read alignment.
     The algorithm support spliced alignments. """
-    global c2i, bufferSize, ivals, maxp, pref
+    #global c2i, bufferSize, ivals, maxp, pref
+    region = args[0]
+    totdata = []
+    for data in parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
+                              mpileup_opts, verbose, bothStrands=0, alphabet='ACGT', region=region):
+        totdata.append(data)
+    return totdata
+
+def bam2chromosomes(bam):
+    """Return chromosome names from BAM file"""
+    names, lengths = [], []
+    cmd = "samtools view -H %s"%bam
+    for l in commands.getoutput(cmd):
+        # @SQ     SN:1    LN:58871917
+        if not l.startswith('@SQ'):
+            continue
+        head, sname, slen = l.split('\t')
+        name = ":".join(sname.split(':')[1:])
+        names.append(name)
+        lengths.append(int(slen.split(':')[1]))
+    return names, lengths
         
 def main():
 
@@ -188,7 +211,7 @@ def main():
                                       formatter_class=argparse.RawTextHelpFormatter)
 
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.12')
+    parser.add_argument('--version', action='version', version='1.13')
     parser.add_argument("-o", "--output",    default=sys.stdout, type=argparse.FileType('w'), 
                         help="output stream   [stdout]")
     parser.add_argument("-r", "--rna", nargs="+", 
@@ -208,7 +231,7 @@ def main():
                         help="min frequency for genomic base [%(default)s]")
     parser.add_argument("--mpileup_opts",   default="-I -q 15 -Q 20",  
                         help="options passed to mpileup         [%(default)s]")
-    parser.add_argument("-t", "--threads", default=1,  type=int,
+    parser.add_argument("-t", "--threads", default=1,  type=int, #choices=[1], 
                         help="number of cores to use [%(default)s] NOT IMPLEMENTED YET!")
   
     o = parser.parse_args()
@@ -216,19 +239,20 @@ def main():
         sys.stderr.write("Options: %s\n"%str(o))
         
     #parse pileup in single-thread mode 
+    info = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
     if o.threads<2:
         parser = parse_mpileup(o.dna, o.rna, o.fasta, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                                o.mpileup_opts, o.verbose)
+        for data in parser:
+            o.output.write(info%data)
     else:
         # get chromosomes
-        
+        names, lengths = bam2chromosomes(o.rna[0])
         # process by chromosome
-        p = Pool(o.threads, initializer=init_args, initargs=(c2i, bufferSize))
-        parser = Pool.imap(worker, iterator, chunksize=10000)
-
-    info = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
-    for data in parser:
-        o.output.write(info%data)
+        p = Pool(o.threads)#, initializer=init_args, initargs=(c2i, bufferSize))
+        parser = Pool.imap(worker, names) #, chunksize=10000)
+        for data in parser:
+            o.output.write("".join(info%d for d in data))
     
 if __name__=='__main__': 
     t0 = datetime.now()
