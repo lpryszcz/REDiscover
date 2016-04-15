@@ -75,7 +75,20 @@ Most of REDiscover parameters can be adjusted manually (default values are given
 ### Test run
 To run the test example, execute: 
 ```bash
-./REDiscover -d test/DNA.bam -r test/RNA.bam
+###
+# RNAseq + DNAseq
+./REDiscover -r test/RNA.bam -d test/DNA.bam 
+
+# filter by min. frequency and cluster optionally
+
+
+###
+# RNAseq alone (high false positive expected!)
+./REDiscover -r test/RNA.bam -f test/ref.fa
+
+# discard known SNPs ie. using dbSNP
+
+
 ```
 
 For more details have a look in [test directory](/test). 
