@@ -1,6 +1,9 @@
 #!/usr/bin/env python
-desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam). 
- """
+desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
+
+TBD:
+- speedup if DNAseq.bam by selecting intervals with reads from RNAseq
+"""
 epilog="""Author:
 l.p.pryszcz@gmail.com
 
