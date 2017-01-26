@@ -1,6 +1,6 @@
 REDiscover
 ==========
-Tool for **R**NA **e**diting **discover**y from NGS data.
+Tool for RNA editing discovery from NGS data.
 
 .. contents:: Table of Contents
 
@@ -11,18 +11,21 @@ REDiscover reports differences between transcriptome and underlying genome, thes
 To achieve that, genome and transcriptome are genotyped simultanously and basecalls are compared.
 
 REDiscover is:
+
 - **fast** & **lightweight**, multi-core support and memory-optimised, 
 so it can be run even on then laptop
 - **flexible** toward many sequencing technologies and experimental designs ie. stranded and unstranded RNA-Seq, multiple genomes and/or transcriptomes are accepted as input
-- **reliable** - the tools was tested extensively on vertebrates (_D. rerio_) 
+- **reliable** - the tools was tested extensively on vertebrates *D. rerio* 
 
 
-By default, REDiscover filters: 
+By default, REDiscover filters:
+
 - QC failed reads
 - duplicates
 - reads with mapping quality (mapQ) below 15 
 
 REDiscover reports only regions fulfilling several stringency criteria:
+
 - depth-of-coverage
 - mean basecall quality
 
@@ -30,7 +33,8 @@ Finally, reads with basecall quality below 20 (0.01 probability of error) for gi
 
 .. [//]: # "For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf)."
 
-<img align="right" src="/docs/flowchart.png">
+.. image:: /docs/flowchart.png
+           :align: right
 
 =============
 Prerequisites
