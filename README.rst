@@ -12,11 +12,12 @@ To achieve that, genome and transcriptome are genotyped simultanously and baseca
 
 REDiscover is:
 
-- **fast** & **lightweight**, multi-core support and memory-optimised, 
-so it can be run even on then laptop
+- **fast** & **lightweight**, multi-core support and memory-optimised, so it can be run even on then laptop
 - **flexible** toward many sequencing technologies and experimental designs ie. stranded and unstranded RNA-Seq, multiple genomes and/or transcriptomes are accepted as input
 - **reliable** - the tools was tested extensively on vertebrates *D. rerio* 
 
+ .. image:: /docs/flowchart.png
+           :align: right
 
 By default, REDiscover filters:
 
@@ -32,9 +33,6 @@ REDiscover reports only regions fulfilling several stringency criteria:
 Finally, reads with basecall quality below 20 (0.01 probability of error) for given positiong are ignored. 
 
 .. [//]: # "For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf)."
-
-.. image:: /docs/flowchart.png
-           :align: right
 
 =============
 Prerequisites
