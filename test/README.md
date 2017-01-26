@@ -8,12 +8,14 @@ To run the test example, execute:
 
 **Table of contents**  
 - [Generation of test set](#Generation-of-test-set)
-  - [Redundans pipeline](#redundans-pipeline)
+  - [REDiscover pipeline](#rediscover-pipeline)
 - [Accuracy estimation](#accuracy-estimation)
 
 
 ## Generation of test set
 
+
+### REDiscover pipeline
 
 
 ## Accuracy estimation

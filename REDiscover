@@ -3,6 +3,7 @@ desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
 
 TBD:
 - speedup if DNAseq.bam by selecting intervals with reads from RNAseq
+-- probably need bedtools for that
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
