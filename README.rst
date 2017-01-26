@@ -1,17 +1,12 @@
-# REDiscover
+REDiscover
+==========
 Tool for **R**NA **e**diting **discover**y from NGS data.
 
-- **[REDiscover](#rediscover)**  
-  - **[Methodology](#methodology)**  
-  - **[Prerequisites](#prerequisites)**  
-  - **[Usage](#usage)**  
-    - **[Parameters](#parameters)**  
-    - **[Test run](#test-run)**  
-  - **[FAQ](#faq)**  
-  - **[Citation](#citation)** 
+.. contents:: Table of Contents
 
-## Methodology
-
+===========
+Methodology
+===========
 REDiscover reports differences between transcriptome and underlying genome, these are putative RNA editing sites.
 To achieve that, genome and transcriptome are genotyped simultanously and basecalls are compared.
 
@@ -33,29 +28,34 @@ REDiscover reports only regions fulfilling several stringency criteria:
 
 Finally, reads with basecall quality below 20 (0.01 probability of error) for given positiong are ignored. 
 
-[//]: # "For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf)."
+.. [//]: # "For more information have a look at the [poster](/docs/poster.pdf) or [manuscript](/docs/manuscript.pdf)."
 
-![Flowchart](/docs/flowchart.png)
+<img align="right" src="/docs/flowchart.png">
 
-## Prerequisites
+=============
+Prerequisites
+=============
 - Python 2.7+ & numpy `sudo easy_install -U numpy`
-- [samtools](http://www.htslib.org/)
+- `samtools <http://www.htslib.org/>`_
 
-## Usage
+=====
+Usage
+=====
 REDiscover input consists of **aligned NGS reads** (BAM) from genome(s) and transcriptomes(s).
 REDiscover will return a list of putative **RNA editign sites**. 
 
-### Parameters
+Parameters
+~~~~~~~~~~
 Most of REDiscover parameters can be adjusted manually (default values are given in square brackets []):  
-```
+
   -h, --help            show this help message and exit
   -v, --verbose         verbose
   --version             show program's version number and exit
   -o OUTPUT, --output OUTPUT
                         output stream   [stdout]
-  -r RNA [RNA ...], --rna RNA [RNA ...]
+  -r RNA, --rna RNA
                         input RNA-Seq BAM file(s)
-  -d [DNA [DNA ...]], --dna [DNA [DNA ...]]
+  -d DNA, --dna DNA
                         input DNA-Seq BAM file(s)
   -f FASTA, --fasta FASTA
                         reference FASTA file
@@ -70,35 +70,41 @@ Most of REDiscover parameters can be adjusted manually (default values are given
                         options passed to mpileup         [-I -q 15 -Q 20]
   -t THREADS, --threads THREADS
                         number of cores to use [1] NOT IMPLEMENTED YET!
-```
-
-### Test run
-To run the test example, execute: 
-```bash
-###
-# RNAseq + DNAseq
-./REDiscover -r test/RNA.bam -d test/DNA.bam 
-
-# filter by min. frequency and cluster optionally
 
 
-###
-# RNAseq alone (high false positive expected!)
-./REDiscover -r test/RNA.bam -f test/ref.fa
+Test run
+~~~~~~~~
+To run the test example, execute:
 
-# discard known SNPs ie. using dbSNP
+.. code-block:: bash
+
+    ###
+    # RNAseq + DNAseq
+    ./REDiscover -r test/RNA.bam -d test/DNA.bam 
+    
+    # filter by min. frequency and cluster optionally
+    
+    
+    ###
+    # RNAseq alone (high false positive expected!)
+    ./REDiscover -r test/RNA.bam -f test/ref.fa
+    
+    # discard known SNPs ie. using dbSNP
 
 
-```
+For more details have a look in `test directory </test>`_. 
 
-For more details have a look in [test directory](/test). 
-
-## Tools
+=====
+Tools
+=====
 Along with REDiscover, we provide a bunch of usefull tools for characterisation of RNA editing.
-More details about these can be find in [tools directory](/tools). 
+More details about these can be find in `tools directory </tools>`_. 
 
+===
+FAQ
+===
 
-## FAQ
-
-## Citation
+========
+Citation
+========
 Pryszcz LP, Bochtler M, Winata CL. (In preparation) Detection of RNA editing from NGS. 
