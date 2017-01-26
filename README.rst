@@ -16,9 +16,11 @@ REDiscover is:
 - **flexible** toward many sequencing technologies and experimental designs ie. stranded and unstranded RNA-Seq, multiple genomes and/or transcriptomes are accepted as input
 - **reliable** - the tools was tested extensively on vertebrates *D. rerio* 
 
- .. image:: /docs/flowchart.png
+.. image:: /docs/flowchart.png
+           :width: 600 px 
            :align: right
 
+                   
 By default, REDiscover filters:
 
 - QC failed reads
