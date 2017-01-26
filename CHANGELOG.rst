@@ -1,6 +1,10 @@
 CHANGELOG
 =========
 
+v1.14
+~~~~~
+- stranded libraries support
+
 v1.13
 ~~~~~
 - multithreading support

@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
 
+-s / --stranded optimised for Illumina type stranded protocols
+
+
 TBD:
 - speedup if DNAseq.bam by selecting intervals with reads from RNAseq
 """
@@ -21,13 +24,9 @@ import numpy as np
 read_start_pat = re.compile('\^.')
 indel_pat = re.compile('[+-]\d+')
 
-def _remove_indels(alts):
-    """
-    Remove indels from mpileup.     .$....,,,,....,.,,..,,.,.,,,,,,,....,.,...,.,.,....,,,........,.A.,...,,......^0.^+.^$.^0.^8.^F.^].^],
-    ........,.-25ATCTGGTGGTTGGGATGTTGCCGCT..
-    """
-    #But first strip start/end read info.
-    alts = "".join(read_start_pat.split(alts)).replace('$', '')
+def _remove_indels(alts, toSkip={'^', '$', '*', '<', '>'}):
+    """Remove not-base info from mpileup genotype."""
+    alts = "".join(b for bases in read_start_pat.split(alts) for b in bases if b not in toSkip)
     #remove indels info
     m = indel_pat.search(alts)
     while m:
@@ -44,7 +43,7 @@ def get_alt_allele(base_ref, cov, alg, minFreq, alphabet, reference, bothStrands
     alts = alg
     dels = alts.count('*') 
     #remove insertions
-    alts = _remove_indels(alts)
+    #alts = _remove_indels(alts)
     #get base counts
     baseCounts = [(alts.upper().count(base), base) for base in alphabet]
     #get base frequencies
@@ -95,8 +94,47 @@ def concatenate_mpileup(data):
 def get_meanQ(quals, offset=33):
     """Return mean quality"""
     return np.mean([ord(q)-offset for q in quals])
+
+def genotypes2stranded(genotypes):
+    """Split coverage, basecalls and qualities into forward and reverse strand"""
+    forward, reverse = [], []
+    for cov, bases, quals in zip(genotypes[0::3], genotypes[1::3], genotypes[2::3]):
+        fbases, fquals, rbases, rquals = [], [], [], []
+        for b, q in zip(bases, quals):
+            # at this point I don't care about quals anymore!
+            #if len(bases)!=len(quals):
+            #    sys.stderr.write("[WARNING] Different length of bases and quals %s %s!\n"%(len(bases), len(quals)))
+            if b in set('.ACGTN'):
+                fbases.append(b)
+                fquals.append(q)
+            elif b in set(',acgtn'):
+                rbases.append(b)
+                rquals.append(q)
+            else:
+                sys.stderr.write("[WARNING] Cannot guess the strand: %s %s\n"%(b, bases))
+        # store
+        forward += [len(fbases), "".join(fbases), "".join(fquals)]
+        reverse += [len(rbases), "".join(rbases), "".join(rquals)]
+    return forward, reverse
     
-def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
+def stranded_parser(handle, stranded=0):
+    """Split mpileup output into forward and reverse strand information"""
+    for line in handle:
+        #print line
+        lineTuple = line.strip().split('\t')
+        posinfo, genotypes = lineTuple[:3], lineTuple[3:]
+        # remove indels
+        for i in range(1, len(genotypes), 3):
+            genotypes[i] = _remove_indels(genotypes[i])
+        # split stranded and yield forward and reverse reads separately
+        if stranded:
+            forward, reverse = genotypes2stranded(genotypes)
+            yield posinfo + forward, "-"
+            yield posinfo + reverse, "+"
+        else:
+            yield posinfo + genotypes, "."
+                
+def parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
                   mpileup_opts, verbose, bothStrands=0, alphabet='ACGT', region=''):
     """Run mpileup subprocess and parse output."""
     #open subprocess
@@ -108,10 +146,10 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
     args += mpileup_opts.split() + dna + rna 
     if verbose:
         sys.stderr.write("Running samtools mpileup...\n %s\n" % " ".join(args))
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=65536)
-    for line in proc.stdout:
-        line      = line.strip()
-        lineTuple = line.split('\t')
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)#, bufsize=10)
+    # process lines 
+    for lineTuple, strand in stranded_parser(proc.stdout, stranded):
+        #print lineTuple
         #get coordinate
         contig, pos, baseRef = lineTuple[:3]
         # DNA bam files
@@ -135,7 +173,7 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
                 continue
             samplesData = lineTuple[3:]
             
-        cov, alg, quals = concatenate_mpileup(samplesData) #in zip(outFiles, samplesData[0::3], samplesData[1::3], samplesData[2::3]):
+        cov, alg, quals = concatenate_mpileup(samplesData) 
         cov = int(cov)
         if cov<minDepth:
             continue
@@ -150,7 +188,7 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
             freqs = freqs[:idx] + freqs[idx+1:]
             bases.remove(refBase)
         #print refCov, refAlgs, refQuals, refData
-
+        
         # rescue major alt haplotype if the other is only very low freq
         
         #print cov, alg, quals, samplesData
@@ -162,7 +200,7 @@ def parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
         #if not bases.difference(baseRef):
         #    continue
         meanQ = get_meanQ(quals)
-        yield (contig, pos, refBase, bases.pop(), refCov, gmeanQ, refFreq.pop(), \
+        yield (contig, pos, strand, refBase, bases.pop(), refCov, gmeanQ, refFreq.pop(), \
                cov, meanQ, freqs.pop())
 
 def init_args(*args):
@@ -204,7 +242,7 @@ def main():
                                       formatter_class=argparse.RawTextHelpFormatter)
 
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.13a')
+    parser.add_argument('--version', action='version', version='1.14a')
     parser.add_argument("-o", "--output",    default=sys.stdout, type=argparse.FileType('w'), 
                         help="output stream   [stdout]")
     parser.add_argument("-r", "--rna", nargs="+", 
@@ -214,6 +252,8 @@ def main():
                         help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default = None, 
                         help="reference FASTA file")
+    parser.add_argument("-s", "--stranded", default=False, action="store_true",
+                        help="stranded RNAseq libraries")    
     parser.add_argument("--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("--minAltReads", default=3,  type=int,
@@ -227,14 +267,22 @@ def main():
     parser.add_argument("-t", "--threads", default=1,  type=int, 
                         help="number of cores to use [%(default)s]")
   
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
     o = parser.parse_args()
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
-        
+
+    # focus only on first read in pair
+    if o.stranded:
+        o.mpileup_opts += " --rf 64"
+
     #parse pileup in single-thread mode 
-    info = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+    info = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
     if o.threads<2:
-        parser = parse_mpileup(o.dna, o.rna, o.fasta, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
+        parser = parse_mpileup(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                                o.mpileup_opts, o.verbose)
         for data in parser:
             o.output.write(info%data)
@@ -242,7 +290,7 @@ def main():
         # get chromosomes
         regions = regions_generator(o.rna[0])
         # process by chromosome
-        initargs = (o.dna, o.rna, o.fasta, o.minDepth, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose)
+        initargs = (o.dna, o.rna, o.fasta, o.minDepth, o.stranded, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose)
         p = Pool(o.threads, initializer=init_args, initargs=initargs)
         parser = p.imap(worker, regions)
         for data in parser:
