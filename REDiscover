@@ -290,6 +290,15 @@ def main():
     else:
         # get chromosomes
         regions = regions_generator(o.rna[0])
+        # make sure all bam files are indexed
+        if o.verbose:
+            sys.stderr.write("Indexing bam file(s)...\n")        
+        for fn in o.dna + o.rna:
+            if not os.path.isfile(fn+".bai"):
+                cmd = "samtools index %s"%fn
+                if o.verbose:
+                    sys.stderr.write(" %s\n"%cmd)
+                os.system(os.system(cmd))
         # process by chromosome
         initargs = (o.dna, o.rna, o.fasta, o.minDepth, o.stranded, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose)
         p = Pool(o.threads, initializer=init_args, initargs=initargs)
