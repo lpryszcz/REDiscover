@@ -303,7 +303,7 @@ def main():
         # get chromosomes
         regions = regions_generator(o.rna[0])
         # process by chromosome
-        initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.stranded, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose)
+        initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, o.mpileup_opts, o.verbose)
         p = Pool(o.threads, initializer=init_args, initargs=initargs)
         parser = p.imap(worker, regions)
         for data in parser:
