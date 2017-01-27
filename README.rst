@@ -19,6 +19,7 @@ REDiscover is:
 .. image:: /docs/flowchart.png
            :width: 600 px 
            :align: right
+           :scale: 75
 
                    
 By default, REDiscover filters:

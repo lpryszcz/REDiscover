@@ -205,16 +205,16 @@ def parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
                cov, meanQ, freqs.pop())
 
 def init_args(*args):
-    global dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
-    dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose = args
+    global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
+    dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose = args
     
 def worker(args):
     """Count overlapping intervals with given read alignment.
     The algorithm support spliced alignments. """
-    global dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
+    global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mpileup_opts, verbose
     region = args
     totdata = []
-    for data in parse_mpileup(dna, rna, fasta, minDepth, minDNAfreq, minRNAfreq,
+    for data in parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
                               mpileup_opts, verbose, bothStrands=0, alphabet='ACGT', region=region):
         totdata.append(data)
     return totdata
