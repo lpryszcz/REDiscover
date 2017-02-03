@@ -5,6 +5,7 @@ desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
 
 
 TBD:
+- rescue major alt haplotype if the other is only very low freq!!
 - speedup if DNAseq.bam by selecting intervals with reads from RNAseq
 -- probably need bedtools for that
 """
@@ -27,14 +28,14 @@ indel_pat = re.compile('[+-]\d+')
 
 def _remove_indels(alts, toSkip={'^', '$', '*', '<', '>'}):
     """Remove not-base info from mpileup genotype."""
+    # here I should keep mapQ only from kept bases, while all are kept!
     alts = "".join(b for bases in read_start_pat.split(alts) for b in bases if b not in toSkip)
-    #remove indels info
+    # remove indels info
     m = indel_pat.search(alts)
     while m:
-        #remove indel
         pos = m.end() + int(m.group()[1:])
         alts = alts[:m.start()] + alts[pos:]
-        #get next match
+        # get next match
         m = indel_pat.search(alts, m.start())
     return alts
 
@@ -118,7 +119,7 @@ def genotypes2stranded(genotypes):
         reverse += [len(rbases), "".join(rbases), "".join(rquals)]
     return forward, reverse
     
-def stranded_parser(handle, stranded=0):
+def stranded_parser(handle, dna=[], stranded=0):
     """Split mpileup output into forward and reverse strand information"""
     for line in handle:
         #print line
@@ -129,9 +130,10 @@ def stranded_parser(handle, stranded=0):
             genotypes[i] = _remove_indels(genotypes[i])
         # split stranded and yield forward and reverse reads separately
         if stranded:
+            ref, genotypes = genotypes[:3*len(dna)], genotypes[3*len(dna):]
             forward, reverse = genotypes2stranded(genotypes)
-            yield posinfo + forward, "-"
-            yield posinfo + reverse, "+"
+            yield posinfo + ref + forward, "-"
+            yield posinfo + ref + reverse, "+"
         else:
             yield posinfo + genotypes, "."
                 
@@ -149,7 +151,7 @@ def parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
         sys.stderr.write("Running samtools mpileup...\n %s\n" % " ".join(args))
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)#, bufsize=10)
     # process lines 
-    for lineTuple, strand in stranded_parser(proc.stdout, stranded):
+    for lineTuple, strand in stranded_parser(proc.stdout, dna, stranded):
         #print lineTuple
         #get coordinate
         contig, pos, baseRef = lineTuple[:3]
@@ -196,6 +198,7 @@ def parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
         if len(baseRef) != 1 or len(bases) != 1:
             info = "[WARNING] Wrong number of bases: %s:%s %s %s\n"
             sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases)))
+            print lineTuple#; sys.exit(1)
             continue
         # skip if the same base
         #if not bases.difference(baseRef):
