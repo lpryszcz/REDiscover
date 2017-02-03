@@ -277,6 +277,7 @@ def main():
         sys.stderr.write("Options: %s\n"%str(o))
 
     # focus only on first read in pair
+    # this is valid for Illumina - in order to add support for another libs you will need to recognise them!
     if o.stranded:
         o.mpileup_opts += " --rf 64"
 
