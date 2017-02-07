@@ -121,7 +121,11 @@ def genotypes2stranded(genotypes):
     
 def stranded_parser(handle, dna=[], stranded=0):
     """Split mpileup output into forward and reverse strand information"""
+    lineTuple = []
     for line in handle:
+        if len(line.split('\t'))<3:
+            sys.stderr.write("[ERROR] Cannot parse line %s. Before: %s\n"%(str(line.split('\t')), lineTuple))
+            continue
         lineTuple = line[:-1].split('\t')
         posinfo, genotypes = lineTuple[:3], lineTuple[3:]
         # remove indels
@@ -147,18 +151,16 @@ def parse_mpileup(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
         args += ["-f", fasta]
     args += mpileup_opts.split() + dna + rna 
     if verbose:
-        sys.stderr.write("Running samtools mpileup...\n %s\n" % " ".join(args))
+        sys.stderr.write(" %s\n" % " ".join(args))
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)#, bufsize=10)
     # process lines 
     for lineTuple, strand in stranded_parser(proc.stdout, dna, stranded):
-        #print lineTuple
         #get coordinate
         contig, pos, baseRef = lineTuple[:3]
         # DNA bam files
         if dna:
             refData = lineTuple[3:3+3*len(dna)]
             samplesData = lineTuple[3+3*len(dna):]
-
             refCov, refAlgs, refQuals = concatenate_mpileup(refData)
             if refCov < minDepth:
                 continue
@@ -237,16 +239,24 @@ def regions_generator(bam, step=int(1e7)):
                 e = slen
             region = "%s:%s-%s"%(chrom, s, e)
             yield region
+
+def is_valid_file(parser, arg):
+    """Return """
+    if os.path.exists(arg):
+        parser.error("The output file %s exists!" % arg)
+    else:
+        return open(arg, 'w')
             
 def main():
     import argparse
-    usage  = "%(prog)s [options] -b ref.bam *.bam" 
+    usage  = "%(prog)s [options]" 
     parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
                                       formatter_class=argparse.RawTextHelpFormatter)
 
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.14a')
-    parser.add_argument("-o", "--output",    default=sys.stdout, type=argparse.FileType('w'), 
+    parser.add_argument("-o", "--output",    default=sys.stdout, #type=argparse.FileType('w'),
+                        type=lambda x: is_valid_file(parser, x), 
                         help="output stream   [stdout]")
     parser.add_argument("-r", "--rna", nargs="+", 
                         help="input RNA-Seq BAM file(s)")
@@ -286,6 +296,19 @@ def main():
     header = "#chr\tpos\tstrand\tref\talt\tref cov\tref Q\tref freq\talt cov\talt Q\talt freq\n"
     o.output.write(header); o.output.flush()
 
+    # make sure all bam files are indexed
+    if o.verbose:
+        sys.stderr.write("Indexing bam file(s)...\n")        
+    for fn in o.dna + o.rna:
+        if not os.path.isfile(fn+".bai"):
+            cmd = "samtools index %s"%fn
+            if o.verbose:
+                sys.stderr.write(" %s\n"%cmd)
+            os.system(cmd)
+            
+    if o.verbose:
+        sys.stderr.write("Running samtools mpileup...\n")
+    
     #parse pileup in single-thread mode 
     info = "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
     if o.threads<2:
@@ -294,15 +317,6 @@ def main():
         for data in parser:
             o.output.write(info%data)
     else:
-        # make sure all bam files are indexed
-        if o.verbose:
-            sys.stderr.write("Indexing bam file(s)...\n")        
-        for fn in o.dna + o.rna:
-            if not os.path.isfile(fn+".bai"):
-                cmd = "samtools index %s"%fn
-                if o.verbose:
-                    sys.stderr.write(" %s\n"%cmd)
-                os.system(cmd)
         # get chromosomes
         regions = regions_generator(o.rna[0])
         # process by chromosome
@@ -311,6 +325,9 @@ def main():
         parser = p.imap(worker, regions)
         for data in parser:
             o.output.write("".join(info%d for d in data))
+
+    # mark file is finished
+    o.output.write("#Finished!"); o.output.flush()
     
 if __name__=='__main__': 
     t0 = datetime.now()
