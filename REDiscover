@@ -355,7 +355,7 @@ def main():
     #regions = get_regions(o.rna[0]) 
     if o.verbose:
         sys.stderr.write("Generating regions...\n")
-    regions = get_covered_regions(o.rna, o.minDepth, 15, o.stranded); print regions
+    regions = get_covered_regions(o.rna, o.minDepth, 15, o.stranded)#; print regions
 
     if o.verbose:
         sys.stderr.write("Running samtools mpileup...\n")
