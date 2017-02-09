@@ -283,7 +283,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, mins
                 continue
             region = "%s:%s-%s"%(ref, s, e)
             regions.append(region)
-            return regions
+    return regions
             
 def is_valid_file(parser, arg):
     """Return """
