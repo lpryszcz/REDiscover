@@ -292,7 +292,7 @@ def main():
 
     # check if outfile exists and not empty
     if os.path.exists(o.output) and open(o.output).readline():
-        sys.stderr.write("The output file %s exists!"%o.output)
+        sys.stderr.write("The output file %s exists!\n"%o.output)
         sys.exit(1)
     else:
         output = open(o.output, "w")
@@ -308,7 +308,7 @@ def main():
     runinfo = " ".join(sys.argv)
     header = "## %s\n# chr\tpos\tstrand\tref\talt\tref cov\tref Q\tref freq\talt cov\talt Q\talt freq\n"%runinfo
     output.write(header); output.flush()
-    info = "%s\t"*10 + "%s\n" #"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+    info = "%s\t"*10 + "%s\n" 
     
     '''
     for data in parse_mpileup(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, mpileup_opts, o.verbose):
