@@ -14,7 +14,7 @@ l.p.pryszcz@gmail.com
 Warsaw/Bratislava, 21/07/2015
 """
 
-import os, re, sys, resource
+import commands, os, re, sys, resource
 from datetime import datetime
 from multiprocessing import Pool
 import subprocess
