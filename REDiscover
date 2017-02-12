@@ -53,6 +53,8 @@ def get_major_alleles(cov, alts, minFreq, alphabet="ACGT", minCount=3):
 
 def concatenate_mpileup(data):
     """Concatenate mpileup from multiple samples / replicas"""
+    if len(data)==3:
+        return data
     cov, algs, quals = 0, [], []
     for _cov, _algs, _quals in zip(data[0::3], data[1::3], data[2::3]):
         if int(_cov):
@@ -65,23 +67,22 @@ def get_meanQ(quals, offset=33):
     """Return mean quality"""
     return np.mean([ord(q)-offset for q in quals])
 
-def genotypes2stranded(genotypes):
+def genotypes2stranded(genotypes, fwdbases=set('.ACGTN'), revbases=set(',acgtn')):
     """Split coverage, basecalls and qualities into forward and reverse strand"""
-    forward, reverse = [], []
+    fbases, fquals, rbases, rquals = [], [], [], []
     for cov, bases, quals in zip(genotypes[0::3], genotypes[1::3], genotypes[2::3]):
-        fbases, fquals, rbases, rquals = [], [], [], []
         for b, q in zip(bases, quals):
-            if b in set('.ACGTN'):
+            if b in fwdbases:
                 fbases.append(b)
                 fquals.append(q)
-            elif b in set(',acgtn'):
+            elif b in revbases:
                 rbases.append(b)
                 rquals.append(q)
             else:
                 sys.stderr.write("[WARNING] Cannot guess the strand: %s %s\n"%(b, bases))
-        # store
-        forward += [len(fbases), "".join(fbases), "".join(fquals)]
-        reverse += [len(rbases), "".join(rbases), "".join(rquals)]
+    # store
+    forward = [len(fbases), "".join(fbases), "".join(fquals)]
+    reverse = [len(rbases), "".join(rbases), "".join(rquals)]
     return forward, reverse
     
 def stranded_parser(handle, dna, stranded, minDepth, minDNAfreq):
@@ -199,6 +200,23 @@ def worker(args):
         totdata.append(data)
     return totdata
 
+def get_regions(bam, step=int(1e7)):
+    """Return chromosome regions from BAM file stepping by step"""
+    cmd = "samtools view -H %s"%bam
+    for l in commands.getoutput(cmd).split('\n'):
+        # @SQ     SN:1    LN:58871917
+        if not l.startswith('@SQ'):
+            continue
+        ldata = l.split('\t')
+        slen = int(ldata[2].split(':')[1])
+        chrom = ":".join(ldata[1].split(':')[1:])
+        for s in xrange(1, slen+1, step):
+            e = s + step - 1
+            if e>slen:
+                e = slen
+            region = "%s:%s-%s"%(chrom, s, e)
+            yield region
+    
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
@@ -274,7 +292,7 @@ def main():
                         help="min frequency for genomic base [%(default)s]")
     parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
     parser.add_argument("--bcq", default=20, type=int, help="basecall quality [%(default)s]")
-    parser.add_argument("-t", "--threads", default=1, type=int, help="number of cores to use [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -321,10 +339,15 @@ def main():
             if o.verbose:
                 sys.stderr.write(" %s\n"%cmd)
             os.system(cmd)
-    
+
     logger("Generating regions...")
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
-    
+    if o.dna:
+        # use only covered regions if genome BAM provided
+        regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
+    else:
+        # don't bother and use all alignments if not ref genome BAM provided
+        regions = get_regions(o.rna[0])
+        
     logger("Running samtools mpileup...")
     initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, mpileup_opts, o.verbose)
     p = Pool(o.threads, initializer=init_args, initargs=initargs)
