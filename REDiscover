@@ -11,7 +11,7 @@ TBD:
 epilog="""Author:
 l.p.pryszcz@gmail.com
 
-Warsaw/Bratislava, 21/07/2015
+Warsaw/Bratislava/Fribourg, 21/07/2015
 """
 
 import commands, os, re, sys, resource
@@ -57,11 +57,9 @@ def concatenate_mpileup(data):
         return data
     cov, algs, quals = 0, [], []
     for _cov, _algs, _quals in zip(data[0::3], data[1::3], data[2::3]):
-        if int(_cov):
-            cov += int(_cov)
-            algs.append(_algs)
-            quals.append(_quals)
-    return cov, "".join(algs), "".join(quals)
+        algs.append(_algs)
+        quals.append(_quals)
+    return len("".join(algs)), "".join(algs), "".join(quals)
 
 def get_meanQ(quals, offset=33):
     """Return mean quality"""
@@ -81,8 +79,8 @@ def genotypes2stranded(genotypes, fwdbases=set('.ACGTN'), revbases=set(',acgtn')
             else:
                 sys.stderr.write("[WARNING] Cannot guess the strand: %s %s\n"%(b, bases))
     # store
-    forward = [len(fbases), "".join(fbases), "".join(fquals)]
-    reverse = [len(rbases), "".join(rbases), "".join(rquals)]
+    forward = [len("".join(fbases)), "".join(fbases), "".join(fquals)]
+    reverse = [len("".join(rbases)), "".join(rbases), "".join(rquals)]
     return forward, reverse
     
 def stranded_parser(handle, dna, stranded, minDepth, minDNAfreq):
@@ -96,7 +94,7 @@ def stranded_parser(handle, dna, stranded, minDepth, minDNAfreq):
         lineTuple = line[:-1].split('\t')
         posinfo, genotypes = lineTuple[:3], lineTuple[3:]
         contig, pos, baseRef = posinfo
-        
+
         # skip if low coverage; note it'll be done 2nd time later, for stranded rnaseq
         altcov = sum(int(x) for x in genotypes[3*len(dna)::3])
         if altcov < minDepth:
@@ -130,7 +128,7 @@ def stranded_parser(handle, dna, stranded, minDepth, minDNAfreq):
         # remove indels from samples
         for i in range(1, len(genotypes), 3):
             genotypes[i] = _remove_indels(genotypes[i])
-            
+    
         # split stranded and yield forward and reverse reads separately
         if stranded:
             forward, reverse = genotypes2stranded(genotypes)
@@ -309,7 +307,9 @@ def main():
             sys.exit(1)
 
     # check if outfile exists and not empty
-    if os.path.exists(o.output) and open(o.output).readline():
+    if o.output=="-":
+        output = sys.stdout
+    elif os.path.exists(o.output) and open(o.output).readline():
         sys.stderr.write("The output file %s exists!\n"%o.output)
         sys.exit(1)
     else:
