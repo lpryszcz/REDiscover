@@ -23,6 +23,17 @@ base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()):
     base2index[b] = i
 
+def get_major_alleles(bases, freqs, maxfrac=0.33):
+    """Return major alleles, this is alleles with freq
+    at least minfrac of max frac for given locus"""
+    if len(bases)>1:
+        minfreq = maxfrac * max(freqs)
+        for i, f in enumerate(freqs):
+            if f < minfreq:
+                bases.pop(i)
+                freqs.pop(i)
+    return bases, freqs
+                    
 def get_allele_freqs(counts, minFreq=0.03, minCount=3):
     """Return major alleles that passed filtering and their frequencies."""
     bases, freqs = [], []
@@ -211,17 +222,6 @@ def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
         yield (contig, pos, strand, refBase, bases[0], refCov, get_meanQ(refquals),
                refFreq[0], cov, get_meanQ(squals), freqs[0])
 
-def get_major_alleles(bases, freqs, maxfrac=0.5):
-    """Return major alleles, this is alleles with freq
-    at least minfrac of max frac for given locus"""
-    if len(bases)>1:
-        minfreq = maxfrac * max(freqs)
-        for i, f in enumerate(freqs):
-            if f < minfreq:
-                bases.pop(i)
-                freqs.pop(i)
-    return bases, freqs
-                    
 def init_args(*args):
     global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, verbose
     dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, verbose = args
