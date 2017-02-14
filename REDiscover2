@@ -4,9 +4,8 @@ desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
 -s / --stranded optimised for Illumina type stranded protocols
 
 TBD:
-- rescue major alt haplotype if the other is only very low freq!!
-- use read1/2 in --stranded, so far only using read1
-- on indels removal from read, make sure to strip quals properly!
+- report editing for heterozygous sites
+- use stranded info to distinguish between real editing and SNPs
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -19,18 +18,23 @@ from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
 
-def get_major_alleles(cov, alts, minFreq, alphabet="ACGT", minCount=3):
+alphabet = "ACGTN"
+base2index = {b: i for i, b in enumerate(alphabet)}
+for i, b in enumerate(alphabet.lower()):
+    base2index[b] = i
+
+def get_allele_freqs(counts, minFreq=0.03, minCount=3):
     """Return major alleles that passed filtering and their frequencies."""
     bases, freqs = [], []
-    for base_count, base in zip((alts.count(b) for b in alphabet), alphabet):
+    for c, b in zip(counts, alphabet):
         # skip if alt base calling if less than 3 reads
-        if base_count < minCount:
+        if c < minCount:
             continue
-        freq = base_count*1.0/cov
+        freq = 1.*c/sum(counts)
         #check freq
         if freq < minFreq:
             continue
-        bases.append(base)
+        bases.append(b)
         freqs.append(freq)
     return bases, freqs
 
@@ -48,6 +52,11 @@ def _unload_region(region):
         if len(start_end)==2:
             end = int(start_end[1])
     return ref, start, end
+
+def is_qcfail(a, mapq=15):
+    """Return True if alignment record fails quality checks"""
+    if a.mapq<mapq or a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
+        return True
     
 def bam2calls(bam, region="", mapq=15, baseq=20, offset=33):
     """Return list of basecalls from BAM file. Each list element is as follows:
@@ -57,47 +66,51 @@ def bam2calls(bam, region="", mapq=15, baseq=20, offset=33):
     - list of - strand basecalls
     - list of - strand quals
     """
-    calls = []
-    # process reads
     sam = pysam.Samfile(bam)
     ref, start, end = _unload_region(region)
+    calls = [[start-1, [0]*len(alphabet), [], [0]*len(alphabet), []]]
     for a in sam.fetch(region=region):
-        if start and a.pos<start-1 or end and a.pos>end-1 \
-           or a.mapq<mapq or a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
+        if start and a.pos<start-1 or end and a.pos>end-1 or is_qcfail(a, mapq): 
             continue
         # add containers for new positions 
-        s = a.pos
-        if calls and s < calls[-1][0]:
-            s = calls[-1][0]
-        # pos forward bases quals, reverse bases & quals
-        calls += [[i, [], [], [], []] for i in range(s, a.aend)]
+        ## pos forward bases quals, reverse bases & quals
+        calls += [[i, [0]*len(alphabet), [], [0]*len(alphabet), []] for i in xrange(calls[-1][0]+1, a.aend)]
         # report previous calls
-        while calls[0] < a.pos:
+        while calls[0][0] < a.pos:
             yield calls.pop(0)
         # add calls from current read
-        for b, q, (readi, refi) in zip(a.seq, a.qual, a.aligned_pairs):
+        for readi, refi in a.aligned_pairs:
+            if not readi:
+                continue
+            b, q = a.seq[readi], a.qual[readi]
             # skip indels and low base calls
             if not refi or ord(q)-offset<baseq:
                 continue
-            index = refi - a.pos
+            index = refi - calls[0][0]
             # for +/for i == 1; for -/rev i==3
             i = 1
             if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
                 i = 3
             # store basecall and quality
-            calls[index][i].append(b)
+            calls[index][i][base2index[b]] += 1
             calls[index][i+1].append(q)    
     # report remaining calls
-    while calls:
-        yield calls.pop(0)
+    for call in calls: 
+        yield call
 
 def fasta2calls(fastafn, region="", cov=100, qual="I"):
     """Return list of basecalls from FastA file."""
     ref, start, end = _unload_region(region)
     fasta = pysam.Fastafile(fastafn)
     for refi, b in enumerate(fasta.fetch(region=region), start-1):
-        yield refi, [(".", b*cov, get_meanQ(qual*cov))]
+        counts = [0]*len(alphabet)
+        counts[base2index[b]] += cov 
+        yield refi, [(".", counts, qual)]
 
+def add_lists(*lists):
+    """Return new list with elements being sums of elements of list1 and list2"""
+    return [sum(c) for c in zip(*lists)]
+        
 def get_combined_calls(bams, region, mapq, baseq, stranded=0):
     """Combine basecalls from several files"""
     parsers = [bam2calls(bam, region, mapq, baseq) for bam in bams]
@@ -110,20 +123,21 @@ def get_combined_calls(bams, region, mapq, baseq, stranded=0):
         curpos = min(positions)
         curcalls = filter(lambda call: call and call[0]==curpos, calls)
         # unload calls
-        fbases, fquals, rbases, rquals = [], [], [], []
+        fbases, rbases = [0]*len(alphabet), [0]*len(alphabet)
+        fquals, rquals = [], []
         for _pos, _fbases, _fquals, _rbases, _rquals in curcalls:
-            fbases += _fbases
+            fbases = add_lists(fbases, _fbases)
             fquals += _fquals
-            rbases += _rbases
+            rbases = add_lists(rbases, _rbases)
             rquals += _rquals
         # report only if any bases
         if len(fbases+rbases):
-            #print curpos, fbases[:5], get_meanQ(fquals), rbases[:5], get_meanQ(rquals)
             if stranded:
                 # this is true for Illumina stranded protocol
-                data = [("-", fbases, get_meanQ(fquals)), ("+", rbases, get_meanQ(rquals))]
+                data = [("-", fbases, fquals), ("+", rbases, rquals)]
             else:
-                data = [(".", fbases+rbases, get_meanQ(fquals+rquals))]
+                # return sum of calls from + and - strand
+                data = [(".", add_lists(fbases, rbases), fquals+rquals)]
             yield curpos, data
         # load next entry only for processed parsers
         for i in range(len(parsers)):
@@ -152,7 +166,7 @@ def get_calls(dna, rna, fasta, stranded, region, mapq, baseq):
         if len(curcalls)==2:
             refstrand, refbases, refQ = curcalls[0][1][0]
             for strand, bases, meanQ in curcalls[1][1]:
-                yield ref, curpos, strand, refbases, refQ, bases, meanQ
+                yield ref, curpos+1, strand, refbases, refQ, bases, meanQ
         # load next entry only for processed parsers
         for i in range(len(parsers)):
             if calls[i] and calls[i][0]==curpos:
@@ -162,42 +176,52 @@ def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
                    mapq, baseq, verbose=0, region=''):
     """Return RNA editing positions"""
     parser = get_calls(dna, rna, fasta, stranded, region, mapq, baseq)
-    for contig, pos, strand, refsases, gmeanQ, bases, meanQ in parser:
-        refCov = len(refsases)
-        if refCov<minDepth:
-            continue
-        baseRef, refFreq = get_major_alleles(refCov, refsases, minDNAfreq)
-        if not baseRef:
-            continue
-
-        cov = len(bases)
-        if cov<minDepth:
+    for contig, pos, strand, refbases, refquals, sbases, squals in parser:
+        refCov, cov = sum(refbases), sum(sbases)
+        #print contig, pos, strand, refbases, sbases
+        if refCov<minDepth or cov<minDepth:
             continue
             
         # check for SNP
-        bases, freqs = get_major_alleles(cov, bases, minRNAfreq)
-        if not bases or bases==baseRef:
+        baseRef, refFreq = get_allele_freqs(refbases, minDNAfreq)
+        bases, freqs = get_allele_freqs(sbases, minRNAfreq)
+        if not baseRef or not bases or bases==baseRef:
             continue
-        #print baseRef, refFreq, bases, freqs
+
+        # keep only major allele(s)
+        baseRef, refFreq = get_major_alleles(baseRef, refFreq)
+            
         # remove ref base from alternative bases
         refBase = baseRef[0]
         if refBase in bases:
             idx = bases.index(refBase)
-            freqs = freqs[:idx] + freqs[idx+1:]
-            bases.remove(refBase)
+            bases.pop(idx)
+            freqs.pop(idx)
+
+        # keep only major allele(s) from sample, but after removing ref allele
+        bases, freqs = get_major_alleles(bases, freqs)
         
-        # rescue major alt haplotype if the other is only very low freq
-        
-        if len(baseRef) != 1 or len(bases) != 1:
+        # skip if more alternative alleles
+        if len(refBase) > 1 or len(bases) > 1:
+            #print contig, pos, strand, refbases, sbases, baseRef, refFreq, bases, freqs
             info = "[WARNING] Wrong number of bases: %s:%s %s %s\n"
             sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases)))
             continue
-        # skip if the same base
-        #if not bases.difference(baseRef):
-        #    continue
-        yield (contig, pos, strand, refBase, bases.pop(), refCov, gmeanQ, refFreq[0], \
-               cov, meanQ, freqs[0])
+            
+        yield (contig, pos, strand, refBase, bases[0], refCov, get_meanQ(refquals),
+               refFreq[0], cov, get_meanQ(squals), freqs[0])
 
+def get_major_alleles(bases, freqs, maxfrac=0.5):
+    """Return major alleles, this is alleles with freq
+    at least minfrac of max frac for given locus"""
+    if len(bases)>1:
+        minfreq = maxfrac * max(freqs)
+        for i, f in enumerate(freqs):
+            if f < minfreq:
+                bases.pop(i)
+                freqs.pop(i)
+    return bases, freqs
+                    
 def init_args(*args):
     global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, verbose
     dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, verbose = args
@@ -213,39 +237,21 @@ def worker(args):
         totdata.append(data)
     return totdata
 
-def get_regions(bam, step=int(1e5)):
-    """Return chromosome regions from BAM file stepping by step"""
-    sam = pysam.Samfile(bam)
-    for ref, length in zip(sam.references, sam.lengths):
-        for s in xrange(1, length+1, step):
-            e = s + step - 1
-            if e>length:
-                e = length
-            region = "%s:%s-%s"%(ref, s, e)
-            yield region
-    
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
             
-def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, minsize=0):
-    """Return chromosome regions covered by at least mincov reads cumulatively from all bam files.
-    
-    Regions distant less by maxdist will be collapsed. Make sure, maxdist is large enough,
-    ie 16kb is typical linear index block size for sorted bam. 
-    """
+def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
+    """Return chromosome regions covered by at least mincov"""
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        #if ref!="7": continue
-        # store coverage
+        #if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
         for bam in bams:
             sam = pysam.Samfile(bam)
             for a in sam.fetch(reference=ref):
-                # qc and skip read2 if stranded
-                if a.mapq<mapq or a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary \
-                   or stranded and a.is_read2:
+                if is_qcfail(a, mapq):
                     continue
                 # add alg blocks
                 for s, e in a.blocks:
@@ -256,8 +262,6 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, mins
             if len(positions)<1:
                 continue
             s, e = positions[0]+1, positions[-1]+1
-            if minsize and e-s<minsize:
-                continue
             region = "%s:%s-%s"%(ref, s, e)
             yield region
 
@@ -267,7 +271,7 @@ def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
     if add_timestamp:
         timestamp = "[%s] "%datetime.ctime(datetime.now())
     if add_memory:
-        memory = "[memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
+        memory = " [memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
     out.write("%s%s%s\n"%(timestamp, info, memory))
 
 def main():
@@ -328,14 +332,14 @@ def main():
     output.write(header); output.flush()
     info = "%s\t"*10 + "%s\n" 
     
-    #'''
-    regions = get_regions(o.rna[0])
+    '''
+    regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
     for region in regions:
         print region
         parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                                 o.mapq, o.bcq, o.verbose, region)
         for data in parser:
-            output.write(info%data)
+            output.write(info%data)    
     '''
     logger("Indexing bam file(s)...")
     for fn in o.dna + o.rna:
@@ -346,12 +350,7 @@ def main():
             os.system(cmd)
 
     logger("Generating regions...")
-    if o.dna:
-        # use only covered regions if genome BAM provided
-        regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
-    else:
-        # don't bother and use all alignments if not ref genome BAM provided
-        regions = get_regions(o.rna[0])
+    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
         
     logger("Genotyping...")
     initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \

@@ -1,9 +1,16 @@
 CHANGELOG
 =========
 
+v1.15
+~~~~~
+- both reads (read1 & read2) are processed for stranded libraries
+- major allele is rescued for low frequency alternative alleles
+- further optimisation for performance
+
 v1.14
 ~~~~~
-- stranded libraries support
+- stranded libraries support (only read1 is processed)
+- optimised for performance
 
 v1.13
 ~~~~~
