@@ -79,8 +79,11 @@ def bam2calls(bam, region="", mapq=15, baseq=20, offset=33):
     """
     sam = pysam.Samfile(bam)
     ref, start, end = _unload_region(region)
+    # stop if ref not in sam file
+    if ref not in sam.references:
+        raise StopIteration
     calls = [[start-1, [0]*len(alphabet), [], [0]*len(alphabet), []]]
-    for a in sam.fetch(region=region):
+    for a in sam.fetch(ref, start, end):
         if start and a.pos<start-1 or end and a.pos>end-1 or is_qcfail(a, mapq): 
             continue
         # add containers for new positions 
@@ -330,17 +333,8 @@ def main():
     runinfo = " ".join(sys.argv)
     header = "## %s\n# chr\tpos\tstrand\tref\talt\tref cov\tref Q\tref freq\talt cov\talt Q\talt freq\n"%runinfo
     output.write(header); output.flush()
-    info = "%s\t"*10 + "%s\n" 
+    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%.3f\t%s\t%.3f\t%.3f\n"
     
-    '''
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
-    for region in regions:
-        print region
-        parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
-                                o.mapq, o.bcq, o.verbose, region)
-        for data in parser:
-            output.write(info%data)    
-    '''
     logger("Indexing bam file(s)...")
     for fn in o.dna + o.rna:
         if not os.path.isfile(fn+".bai"):
@@ -350,8 +344,15 @@ def main():
             os.system(cmd)
 
     logger("Generating regions...")
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
-        
+    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)        
+    '''
+    for region in regions:
+        print region
+        parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
+                                o.mapq, o.bcq, o.verbose, region)
+        for data in parser:
+            output.write(info%data)    
+    '''
     logger("Genotyping...")
     initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                 o.mapq, o.bcq, o.verbose)

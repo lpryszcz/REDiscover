@@ -6,6 +6,7 @@ v1.15
 - both reads (read1 & read2) are processed for stranded libraries
 - major allele is rescued for low frequency alternative alleles
 - further optimisation for performance
+  - pysam instead of `samtools mpileup` subprocess
 
 v1.14
 ~~~~~
