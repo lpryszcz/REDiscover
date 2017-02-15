@@ -4,6 +4,8 @@
 # USAGE: ./get_hist.py [-s snps.vcf] file1.txt [... fileN.txt]
 
 import os, sys
+import matplotlib
+matplotlib.use('Agg') # Force matplotlib to not use any Xwindows backend
 import matplotlib.pyplot as plt
 
 def load_snps(handle):
