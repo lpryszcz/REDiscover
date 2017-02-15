@@ -36,7 +36,10 @@ def txt2changes(handle, snps, template="%s>%s%s"):
     # skip if known snp
     if chrom in snps and int(pos) in snps[chrom]:
       continue
-    snp2freq[template%(ref, alt, strand)].append(altfreq)
+    snp = template%(ref, alt, strand)
+    if snp not in snp2freq:
+      continue
+    snp2freq[snp].append(altfreq)
   return snp2freq
 
 
@@ -55,6 +58,7 @@ else:
 # process all files
 for i, fn in enumerate(fnames, 1):
   fig = plt.figure(figsize=(15, 15)) # figsize=(24,16)) # figsize=(11.69,8.27)) #
+  fig.suptitle(fn, size=20)
   print i, fn
   outfn = "%s.hist.png"%fn
   if os.path.isfile(outfn):
@@ -68,7 +72,12 @@ for i, fn in enumerate(fnames, 1):
   for ii, snp in enumerate(sorted(filter(lambda x: x[-1]=="+", snp2freq)), 1):
     ax = fig.add_subplot(4, 3, ii)
     snprc = "".join(base2rc[b] for b in snp)#; print snp, snprc
-    n, bins, patches = ax.hist([snp2freq[snp], snp2freq[snprc]], bins, normed=0, stacked=True, color=['blue', 'red',], label=["+", "-"])
+    data = [[], []]
+    if snp in snp2freq:
+      data[0] = snp2freq[snprc]
+    if snprc in snp2freq:
+      data[1] = snp2freq[snprc]
+    n, bins, patches = ax.hist(data, bins, normed=0, stacked=True, color=['blue', 'red',], label=["+", "-"])
     ax.set_title(snp[:-1])
     ax.grid(True)
   plt.savefig(outfn, dpi=300, transparent=False) #orientation='landscape', 
