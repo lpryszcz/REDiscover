@@ -70,11 +70,9 @@ def get_blocks(a, start, end, baseq, i, basesize):
         if not data or refi<start-1:
             continue
         if prefi<start:
-            #print start, end, prefi, bases, preadi
             bases -= start-prefi
             preadi += start-prefi
             prefi = start
-            #print start, end, prefi, bases, preadi    
         if refi>end:
             bases -= refi-end
         if bases<1:
@@ -208,7 +206,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        if ref!="chr21": continue
+        #if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
         for bam in bams:
             sam = pysam.Samfile(bam)
