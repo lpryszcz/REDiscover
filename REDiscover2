@@ -18,7 +18,7 @@ from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
 
-alphabet = "ACGTN"
+alphabet = "ACGT"
 base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()):
     base2index[b] = i
@@ -51,18 +51,25 @@ def get_allele_freqs(counts, minFreq=0.03, minCount=3):
 
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
+    # a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
+    if a.mapq<mapq or a.flag&3840: 
         return True
         
 def _match(refi, readi, bases):
     data = []
-    for i in range(bases):
+    for i in xrange(bases):
         data.append((readi, refi))
         readi += 1
         refi += 1
     return refi, readi, data
-    
-def _insertion(refi, readi, bases): return refi, readi+bases, []
+
+def _insertion(refi, readi, bases):
+    data = []
+    for i in xrange(bases):
+        data.append((readi, None))
+        readi += 1
+    return refi, readi, data
+        
 def _deletion(refi, readi, bases): return refi+bases, readi, []
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _insertion}
@@ -73,87 +80,91 @@ def get_aligned_pairs(a):
     for code, bases in a.cigar:
         refi, readi, iterator = code2function[code](refi, readi, bases)
         for data in iterator: yield data
-    
+
+def get_blocks(a, start, end, baseq, i, basesize):
+    """Return tuple of aligned position of query and reference"""
+    def _match(refi, readi, bases): return refi+bases, readi+bases, True
+    def _insertion(refi, readi, bases): return refi, readi+bases, []
+    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
+                     2: _deletion, 3: _deletion, 4: _insertion, 5: _insertion}
+
+    readi, refi = 0, a.pos
+    for code, bases in a.cigar:
+        prefi, preadi = refi, readi
+        refi, readi, data = code2function[code](refi, readi, bases)
+        if not data or refi<start-1:
+            continue
+        if prefi<start:
+            #print start, end, prefi, bases, preadi
+            bases -= start-prefi
+            preadi += start-prefi
+            prefi = start
+            #print start, end, prefi, bases, preadi    
+        if refi>end:
+            bases -= refi-end
+        if bases<1:
+            break
+        block = [0]*basesize*bases # np.zeros(basesize*bases, dtype='uint16') 2x slower
+        #print start, prefi, len(block), block
+        for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
+            if q<baseq or b not in base2index:
+                continue
+            block[ii*basesize+base2index[b]+i] += 1
+        yield prefi, block
+                
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
-    """Return list of basecalls from BAM file. Each list element is as follows:
-    - genomic position (zero-based)
-    - list of + strand basecalls
-    - list of + strand quals
-    - list of - strand basecalls
-    - list of - strand quals
+    """Return 2D array of basecalls from BAM file, as follows
+    - 1D positions from start to end
+    - 2D base counts for ACGT from sense and antisense strand at given position
     """
     sam = pysam.AlignmentFile(bam)
-    # ACGTN + Q x2 for each strand
-    basesize = 2*(len(alphabet)+1)
-    n = (end-start+1) * basesize
-    calls = np.zeros(n, dtype="i")
+    # ACGT x2 for each strand
+    basesize = 2*len(alphabet)
+    n =  basesize * (end-start+1)
+    calls = np.zeros(n, dtype="int64") #dtype="uint16")
     # stop if ref not in sam file
     if ref not in sam.references:
-        raise StopIteration #return calls #
-    pn = 0
+        return calls
     for a in sam.fetch(ref, start, end):
-        # maybe add also code to skip high coverage regions - double check the index
-        #idx = (a.pos-start+1)*basesize
-        # or sum(calls[idx:idx+len(alphabet)]+calls[idx+len(alphabet)+1:idx+2*len(alphabet)+1])>500:
-        if is_qcfail(a, mapq):
-            continue
-        for readi, refi in get_aligned_pairs(a): 
-            if refi < start-1: 
-                continue
-            elif refi > end-1:
-                break
-            # skip low base calls
-            if a.query_qualities[readi] < baseq:
-                continue
-            # for +/for i == 0; for -/rev i==len(alphabet)+1
-            i = 0
-            if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
-                i = len(alphabet)+1
-            # store basecall and quality
-            index = basesize * (refi - start) + i
-            calls[index+base2index[a.seq[readi]]] += 1
-            calls[index+len(alphabet)] += a.query_qualities[readi]
-        '''
-        # yield previous part
-        while (a.pos-start+1)*basesize > pn:
-            yield calls[pn:pn+basesize]
-            pn += basesize
-    while pn < n:
-        yield calls[pn:pn+basesize]
-        pn += basesize
-    '''
-    return calls
-    #'''
+        if is_qcfail(a, mapq): continue
+        # get transcript strand
+        i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
+        if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
+            i = len(alphabet)
+        '''# get base positions # 0:55
+        positions = [basesize*(refi-start)+base2index[b]+i
+                     for b, q, (readi, refi) in zip(a.seq, a.query_qualities, get_aligned_pairs(a))
+                     if b in base2index and refi>=start-1 and refi<=end and q>=baseq]
+        # update basecalls
+        calls[positions] += 1
+        ''' #0:32
+        for refi, block in get_blocks(a, start, end, baseq, i, basesize):
+            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
+            calls[s:e] += block
+        #'''
+    return calls.reshape((end-start+1, basesize))
 
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
     """Combine basecalls from several files"""
-    '''
-    parsers = [bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams]
-    for call in zip(*parsers):
-        call = np.sum(call, axis=0)
-        '''
-    # ACGTN + Q x2 for each strand
-    basesize = 2*(len(alphabet)+1)
-    n = (end-start+1) * basesize    
-    # sum calls from multiple bam files
-    calls = np.sum((bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams), axis=0)
-    for i in xrange(0, n, basesize):
-        call = calls[i:i+basesize]
-        #'''
+    parsers = (bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams)
+    for call in np.sum(parsers, axis=0): 
         if stranded:
-            yield (call[:len(alphabet)+1], call[len(alphabet)+1:])
+            yield (call[:len(alphabet)], call[len(alphabet):])
         else:
-            yield (call[:len(alphabet)+1] + call[len(alphabet)+1:])
+            yield (call[:len(alphabet)] + call[len(alphabet):])
         
-def fasta2calls(fastafn, ref, start, end, cov=100, qual=40):
+def fasta2calls(fastafn, ref, start, end, cov=100):
     """Return list of basecalls from FastA file."""
     fasta = pysam.FastaFile(fastafn)
     if ref not in fasta.references:
         raise StopIteration
     for b in fasta.fetch(ref, start, end):
-        yield [cov if i==base2index[b] else 0 for i in range(len(alphabet)+1)] + [cov*qual]
+        call = [0]*len(alphabet)
+        if b in base2index:
+            call[base2index[b]] += cov
+        yield call
 
-def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq):
+def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth):
     """Return basecalls from multiple BAM (& FastA) file(s)"""
     # define strands
     strands = "."
@@ -166,19 +177,19 @@ def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq):
     else:
         dnaparser = fasta2calls(fasta, ref, start, end)
     # process
-    for pos, (dnacall, rnacalls) in enumerate(zip(dnaparser, rnaparser), start):
+    for pos, (dnacall, rnacalls) in enumerate(zip(dnaparser, rnaparser), start+1):
+        if sum(dnacall)<minDepth:
+            continue
         for strand, rnacall in zip(strands, rnacalls):
-            yield ref, pos, strand, dnacall[:-1], dnacall[-1], rnacall[:-1], rnacall[-1]
+            if sum(rnacall)<minDepth:
+                continue
+            yield ref, pos, strand, dnacall, rnacall
 
 def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
                    mapq, baseq, verbose=0, ref="", start="", end=""):
     """Return RNA editing positions"""
-    parser = get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq)
-    for contig, pos, strand, refbases, refquals, sbases, squals in parser:
-        refCov, cov = sum(refbases), sum(sbases)
-        if refCov < minDepth or cov < minDepth:
-            continue
-        
+    parser = get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
+    for contig, pos, strand, refbases, sbases in parser:
         # check for SNP
         baseRef, refFreq = get_allele_freqs(refbases, minDNAfreq)
         bases, freqs = get_allele_freqs(sbases, minRNAfreq)
@@ -205,8 +216,7 @@ def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
             sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases)))
             continue
 
-        refQ, sQ = 1.*refquals/refCov, 1.*squals/cov
-        yield (contig, pos, strand, refBase, bases[0], refCov, refQ, refFreq[0], cov, sQ, freqs[0])
+        yield (contig, pos, strand, refBase, bases[0], sum(refbases), refFreq[0], sum(sbases), freqs[0])
 
 def init_args(*args):
     global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, verbose
@@ -245,7 +255,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
-            if len(positions)<1 or positions[0]<4e7:
+            if len(positions)<1: # or positions[0]<45e6:
                 continue
             s, e = positions[0]+1, positions[-1]+1
             yield ref, s, e 
@@ -266,7 +276,7 @@ def main():
                                       formatter_class=argparse.RawTextHelpFormatter)
     
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.15a')
+    parser.add_argument('--version', action='version', version='1.15b')
     parser.add_argument("-o", "--output", required=True,  help="output file")
     parser.add_argument("-r", "--rna", nargs="+", 
                         help="input RNA-Seq BAM file(s)")
@@ -313,9 +323,9 @@ def main():
         output = open(o.output, "w")
 
     runinfo = " ".join(sys.argv)
-    header = "## %s\n# chr\tpos\tstrand\tref\talt\tref cov\tref Q\tref freq\talt cov\talt Q\talt freq\n"%runinfo
+    header = "## %s\n# chr\tpos\tstrand\tref\talt\tref cov\tref freq\talt cov\talt freq\n"%runinfo
     output.write(header); output.flush()
-    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%.3f\t%s\t%.3f\t%.3f\n"
+    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"
     
     logger("Indexing bam file(s)...")
     for fn in o.dna + o.rna:
@@ -329,7 +339,7 @@ def main():
     regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
 
     logger("Genotyping...")
-    #'''
+    '''
     for (ref, start, end) in regions:
         print ref, start, end
         parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
