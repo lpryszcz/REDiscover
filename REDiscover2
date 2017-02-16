@@ -55,39 +55,14 @@ def is_qcfail(a, mapq=15):
     if a.mapq<mapq or a.flag&3840: 
         return True
         
-def _match(refi, readi, bases):
-    data = []
-    for i in xrange(bases):
-        data.append((readi, refi))
-        readi += 1
-        refi += 1
-    return refi, readi, data
-
-def _insertion(refi, readi, bases):
-    data = []
-    for i in xrange(bases):
-        data.append((readi, None))
-        readi += 1
-    return refi, readi, data
-        
+def _match(refi, readi, bases): return refi+bases, readi+bases, True
+def _insertion(refi, readi, bases): return refi, readi+bases, []
 def _deletion(refi, readi, bases): return refi+bases, readi, []
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _insertion}
 
-def get_aligned_pairs(a):
-    """Return tuple of aligned position of query and reference"""
-    readi, refi = 0, a.pos
-    for code, bases in a.cigar:
-        refi, readi, iterator = code2function[code](refi, readi, bases)
-        for data in iterator: yield data
-
 def get_blocks(a, start, end, baseq, i, basesize):
     """Return tuple of aligned position of query and reference"""
-    def _match(refi, readi, bases): return refi+bases, readi+bases, True
-    def _insertion(refi, readi, bases): return refi, readi+bases, []
-    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                     2: _deletion, 3: _deletion, 4: _insertion, 5: _insertion}
-
     readi, refi = 0, a.pos
     for code, bases in a.cigar:
         prefi, preadi = refi, readi
@@ -104,8 +79,7 @@ def get_blocks(a, start, end, baseq, i, basesize):
             bases -= refi-end
         if bases<1:
             break
-        block = [0]*basesize*bases # np.zeros(basesize*bases, dtype='uint16') 2x slower
-        #print start, prefi, len(block), block
+        block = [0]*basesize*bases 
         for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
             if q<baseq or b not in base2index:
                 continue
@@ -131,17 +105,9 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
         if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
             i = len(alphabet)
-        '''# get base positions # 0:55
-        positions = [basesize*(refi-start)+base2index[b]+i
-                     for b, q, (readi, refi) in zip(a.seq, a.query_qualities, get_aligned_pairs(a))
-                     if b in base2index and refi>=start-1 and refi<=end and q>=baseq]
-        # update basecalls
-        calls[positions] += 1
-        ''' #0:32
         for refi, block in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
             calls[s:e] += block
-        #'''
     return calls.reshape((end-start+1, basesize))
 
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
@@ -255,7 +221,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
-            if len(positions)<1: # or positions[0]<45e6:
+            if len(positions)<1: 
                 continue
             s, e = positions[0]+1, positions[-1]+1
             yield ref, s, e 
