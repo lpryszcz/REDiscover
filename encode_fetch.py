@@ -132,9 +132,8 @@ def encode_fetch(out, assays, species, assemblies, verbose=1, onlystranded=1):
                 cmd = "wget -O %s -nc %s%s\n"%(outfn, www, href)
                 out.write(cmd)
                 # store
-                if name not in fnames:
+                if name not in fnames[-1]:
                     fnames[-1][name] = []
-                    #fnames[-1][name][False] = []
                 fnames[-1][name].append(outfn)
         # store REDiscover command
         ## store also stranded or not info here!!

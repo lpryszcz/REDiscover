@@ -55,7 +55,7 @@ def parse_editing(fn, snps, out):
   
 snps = load_dbSNP(vcf)
 
-print "#fname\tnot in dbSNP\tall\n"
+print "#fname\tnot in dbSNP\tall"
 for fn in filter(lambda fn: not fn.endswith('.parsed.txt'), fnames):
   outfn = fn+".parsed.txt"
   # skip if outfn exists and newer than fn
