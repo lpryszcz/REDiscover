@@ -201,13 +201,13 @@ def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
             
-def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
+def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
     """Return chromosome regions covered by at least mincov"""
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
         #if ref.startswith('chr'): continue 
-        # if ref!="chr21": continue
+        #if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
         for bam in bams:
             sam = pysam.Samfile(bam)
@@ -222,8 +222,11 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000):
         for positions in get_consecutive(covered, maxdist):
             if len(positions)<1:# or positions[0]<45e6: 
                 continue
-            # here you can further split regions for max 10M
             s, e = positions[0]+1, positions[-1]+1
+            # further split regions for max 1M windows
+            while s < e-step:
+                yield ref, s, s+step
+                s += step
             yield ref, s, e
 
 def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
@@ -273,7 +276,7 @@ def main():
     o = parser.parse_args()
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
-    return 
+     
     # mark stranded protocol
     if o.fr_firststrand:
         o.stranded = "firststrand"
@@ -304,13 +307,11 @@ def main():
             cmd = "samtools index %s"%fn
             if o.verbose:
                 sys.stderr.write(" %s\n"%cmd)
-            os.system(cmd)
-    
-    logger("Generating regions...")
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
+            os.system(cmd)    
 
     logger("Genotyping...")
     info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"    
+    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
     '''
     for (ref, start, end) in regions:
         print ref, start, end

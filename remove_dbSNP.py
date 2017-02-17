@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # Strip snps present in dbSNP
-# USAGE: ./remove_dbSNP.py 00-common_all.vcf.gz file1 [file2 ... fileN]
+# USAGE: remove_dbSNP.py 00-common_all.vcf.gz file1 [file2 ... fileN]
 
 import os, sys, gzip, pickle
 
