@@ -55,11 +55,13 @@ def parse_editing(fn, snps, out):
   
 snps = load_dbSNP(vcf)
 
-for i, fn in enumerate(fnames, 1):
+print "#fname\tnot in dbSNP\tall\n"
+for fn in filter(lambda fn: not fn.endswith('.parsed.txt'), fnames):
   outfn = fn+".parsed.txt"
-  #if os.path.isfile(outfn):
-  #  continue
+  # skip if outfn exists and newer than fn
+  if os.path.isfile(outfn) and os.stat(fn).st_mtime < os.stat(outfn).st_mtime:
+    continue
   out = open(outfn, "w")
   j, k = parse_editing(fn, snps, out)
-  print fn, k, j
+  print "\t".join(map(str, (fn, k, j)))
   

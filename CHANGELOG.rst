@@ -4,9 +4,18 @@ CHANGELOG
 v1.15
 ~~~~~
 - both reads (read1 & read2) are processed for stranded libraries
-- major allele is rescued for low frequency alternative alleles
+  - this wasn't possible with samtools mpileup, so using pysam instead of `samtools mpileup` subprocess
+- supporting two types of stranded protocols `-fr-secondstrand` and `-fr-firststrand` (for more info: http://salmon.readthedocs.io/en/latest/library_type.html)
 - further optimisation for performance
-  - pysam instead of `samtools mpileup` subprocess
+  - using `numpy.array`
+  - adding read blocks instead of individual bases 
+- stripped mean basecall quality from output
+- major allele is rescued for low frequency alternative alleles
+  - optionally report sites with multiple alternative alleles `-a / --report_alternatives`
+- scripts
+  - removing known SNP sites ie. dbSNP
+  - plotting frequency histogram
+  - annotating from GTF/GFF (TBD)
 
 v1.14
 ~~~~~
@@ -25,8 +34,3 @@ v1.12
 v1.11
 ~~~~~
 - use fasta file as reference
-
-TBD
-~~~
-- rescue major alt haplotype if the other is only very low freq
-- add tools ie cosslinking with GTF and removing dbSNPs
