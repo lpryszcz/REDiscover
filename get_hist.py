@@ -28,7 +28,8 @@ def txt2changes(handle, snps, template="%s>%s%s"):
     if l.startswith('#'):
       continue
     try:
-      chrom, pos, strand, ref, alt, refcov, refQ, reffreq, altcov, altQ, altfreq = l[:-1].split('\t')
+      chrom, pos, strand, ref, alt = l[:-1].split('\t')[:5]
+      altfreq = l[:-1].split('\t')[-1]
       altfreq = float(altfreq)
     except:
       sys.stderr.write("[WARNING] Wrong line %s\n"%str(l[:-1].split('\t')))
