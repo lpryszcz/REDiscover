@@ -2,6 +2,9 @@
 desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
 Alternatively, reference genome can be used instead of DNAseq,
 but at the cost of higher false positive. 
+
+TBD:
+- editing from heterozygous sites?
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -18,32 +21,6 @@ alphabet = "ACGT"
 base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()):
     base2index[b] = i
-
-def get_major_alleles(bases, freqs, maxfrac=0.33):
-    """Return major alleles, this is alleles with freq
-    at least minfrac of max frac for given locus"""
-    if len(bases)>1:
-        minfreq = maxfrac * max(freqs)
-        toremove = [i for i, f in enumerate(freqs) if f < minfreq]
-        for i in reversed(toremove):
-            bases.pop(i)
-            freqs.pop(i)
-    return bases, freqs
-                    
-def get_allele_freqs(counts, minFreq=0.03, minCount=3):
-    """Return major alleles that passed filtering and their frequencies."""
-    bases, freqs = [], []
-    for c, b in zip(counts, alphabet):
-        # skip if alt base calling if less than 3 reads
-        if c < minCount:
-            continue
-        freq = 1.*c/sum(counts)
-        #check freq
-        if freq < minFreq:
-            continue
-        bases.append(b)
-        freqs.append(freq)
-    return bases, freqs
 
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
@@ -127,12 +104,12 @@ def fasta2calls(fastafn, ref, start, end, cov=100):
 def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth):
     """Return basecalls from multiple BAM (& FastA) file(s)"""
     # define strands
-    strands = "."
-    if stranded:
-        if stranded=="firststrand":
-            strands = ("+", "-") # dUTP, NSR, NNSR
-        else:
-            strands = ("-", "+") # Illumina or Standard Solid
+    if not stranded:
+        strands = "."  # unstranded
+    if stranded=="firststrand":
+        strands = "+-" # dUTP, NSR, NNSR
+    else:
+        strands = "-+" # Illumina or Standard Solid
     # get parsers    
     rnaparser = get_combined_calls(rna, ref, start, end, mapq, baseq, stranded)
     if dna:
@@ -148,19 +125,36 @@ def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
                 continue
             yield ref, pos, strand, dnacall, rnacall
 
+def get_major_alleles(bases, freqs, maxfrac=0.33):
+    """Return two lists: major alleles and their frequeinces"""
+    if len(bases)<2:
+        return bases, freqs
+    tokeep = set(i for i, f in enumerate(freqs) if f >= maxfrac * max(freqs))
+    return [b for i, b in enumerate(bases) if i in tokeep], [f for i, f in enumerate(freqs) if i in tokeep]
+                    
+def get_allele_freqs(counts, minFreq=0.03, minCount=3):
+    """Return two lists: alleles that passed filtering and their frequencies"""
+    bases, freqs = [], []
+    for c, b in zip(counts, alphabet):
+        freq = 1.*c/sum(counts)
+        # skip if alt base calling if less than 3 reads or low freq
+        if c >= minCount and freq >= minFreq:
+            bases.append(b)
+            freqs.append(freq)
+    return bases, freqs
+
 def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, baseq, 
                    report_alternatives, verbose, ref="", start="", end=""):
     """Return RNA editing positions"""
     parser = get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
     for contig, pos, strand, refbases, sbases in parser:
-        # check for SNP
         baseRef, refFreq = get_allele_freqs(refbases, minDNAfreq)
         bases, freqs = get_allele_freqs(sbases, minRNAfreq)
         if not baseRef or not bases or bases==baseRef:
             continue
 
-        # keep only major allele(s)
-        baseRef, refFreq = get_major_alleles(baseRef, refFreq)
+        # keep only major allele(s) - not needed currently
+        #baseRef, refFreq = get_major_alleles(baseRef, refFreq)
             
         # remove ref base from alternative bases
         refBase = baseRef[0]
@@ -187,8 +181,6 @@ def init_args(*args):
     dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose = args
     
 def worker(args):
-    """Count overlapping intervals with given read alignment.
-    The algorithm support spliced alignments. """
     global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose
     ref, start, end = args
     totdata = []
@@ -220,7 +212,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
-            if len(positions)<1:# or positions[0]<45e6: 
+            if len(positions)<1:
                 continue
             s, e = positions[0]+1, positions[-1]+1
             # further split regions for max 1M windows
@@ -310,23 +302,22 @@ def main():
             os.system(cmd)    
 
     logger("Genotyping...")
-    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"    
+    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"
     regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
-    '''
-    for (ref, start, end) in regions:
-        print ref, start, end
-        parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
-                                o.mapq, o.bcq, o.report_alternatives, o.verbose, ref, start, end)
+    if o.threads<2: # this is useful for debugging
+        for ref, start, end in regions:
+            parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
+                                    o.mapq, o.bcq, o.report_alternatives, o.verbose, ref, start, end)
+            for data in parser:
+                output.write(info%data)
+    else:
+        initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
+                    o.mapq, o.bcq, o.report_alternatives, o.verbose)
+        p = Pool(o.threads, initializer=init_args, initargs=initargs)
+        parser = p.imap(worker, regions)
         for data in parser:
-            output.write(info%data)    
-    '''
-    initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
-                o.mapq, o.bcq, o.report_alternatives, o.verbose)
-    p = Pool(o.threads, initializer=init_args, initargs=initargs)
-    parser = p.imap(worker, regions)
-    for data in parser:
-        output.write("".join(info%d for d in data))
-    #'''
+            output.write("".join(info%d for d in data))
+
     output.write("#Finished!\n")
     logger("Done!")
     
