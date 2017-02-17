@@ -2,16 +2,22 @@
 # Strip snps present in dbSNP
 # USAGE: ./remove_dbSNP.py 00-common_all.vcf.gz file1 [file2 ... fileN]
 
-import os, sys, gzip
+import os, sys, gzip, pickle
 
 vcf = sys.argv[1]
 fnames = sys.argv[2:]
 
-def load_dbSNP(handle, add_chr=1):
+def load_dbSNP(vcf, add_chr=1):
   """Return dictionary of SNP chromosomes and positions"""
+  # load pickle
+  if os.path.isfile(vcf+".pickle"):
+    snps=pickle.load(open(vcf+".pickle"))
+    print "Loaded %s snps"%sum(map(len, snps.values()))
+    return snps
+  
   snps = {}
   j = k = 0
-  for i, l in enumerate(handle, 1):
+  for i, l in enumerate(gzip.open(vcf), 1):
     #if i>1000: break
     if l.startswith('#'):
       continue
@@ -27,6 +33,7 @@ def load_dbSNP(handle, add_chr=1):
     snps[chrom].add(int(pos))
     k += 1
   print "Loaded %s out of %s SNPs"%(k, j)
+  pickle.dump(snps, open(vcf+".pickle", "w"), 2)
   return snps
   
 def parse_editing(fn, snps, out):
@@ -46,7 +53,7 @@ def parse_editing(fn, snps, out):
     k += 1
   return j, k
   
-snps = load_dbSNP(gzip.open(vcf))
+snps = load_dbSNP(vcf)
 
 for i, fn in enumerate(fnames, 1):
   outfn = fn+".parsed.txt"
