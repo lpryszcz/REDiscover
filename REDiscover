@@ -72,7 +72,7 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     # ACGT x2 for each strand
     basesize = 2*len(alphabet)
     n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64") #dtype="uint16")
+    calls = np.zeros(n, dtype="int64") 
     # stop if ref not in sam file
     if ref not in sam.references:
         return calls.reshape((end-start+1, basesize))
@@ -207,7 +207,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
         #if ref.startswith('chr'): continue 
-        if ref!="chr21": continue
+        #if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
         for bam in bams:
             sam = pysam.Samfile(bam)
