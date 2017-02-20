@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Return histogram of each type of editing
+# Return histogram of each type of editing at min depth of coverage 20X
 
 # USAGE: ./get_hist.py [-s snps.vcf] file1.txt [... fileN.txt]
 
@@ -20,22 +20,23 @@ def load_snps(handle):
     snps[chrom].add(int(pos))
   return snps
   
-def txt2changes(handle, snps, template="%s>%s%s"):
+def txt2changes(handle, snps, minDepth=20, template="%s>%s%s"):
   """Return dictionary of snps and their occurencies"""
   snp2freq = {template%(a, b, s): [] for a in bases for b in bases 
                                      for s in strands if a!=b}
   for l in handle:
     if l.startswith('#'):
       continue
+    ldata = l[:-1].split('\t')
     try:
-      chrom, pos, strand, ref, alt = l[:-1].split('\t')[:5]
-      altfreq = l[:-1].split('\t')[-1]
-      altfreq = float(altfreq)
+      chrom, pos, strand, ref, alt = ldata[:5]
+      altcov, altfreq = ldata[-2:]
+      altcov, altfreq = int(altcov), float(altfreq)
     except:
-      sys.stderr.write("[WARNING] Wrong line %s\n"%str(l[:-1].split('\t')))
+      sys.stderr.write("[WARNING] Wrong line %s\n"%str(ldata))
       break
-    # skip if known snp
-    if chrom in snps and int(pos) in snps[chrom]:
+    # skip if known snp or low cov
+    if altcov < minDepth or chrom in snps and int(pos) in snps[chrom]:
       continue
     snp = template%(ref, alt, strand)
     if snp not in snp2freq:
@@ -58,8 +59,7 @@ else:
   
 # process all files
 for i, fn in enumerate(fnames, 1):
-  fig = plt.figure(figsize=(15, 15)) # figsize=(24,16)) # figsize=(11.69,8.27)) #
-  fig.suptitle(fn, size=20)
+  #fig = plt.figure(figsize=(15, 15)) # figsize=(24,16)) # figsize=(11.69,8.27)) #
   # skip if outfn exists and newer than fn
   outfn = "%s.hist.png"%fn
   if os.path.isfile(outfn) and os.stat(fn).st_mtime < os.stat(outfn).st_mtime:
@@ -71,9 +71,11 @@ for i, fn in enumerate(fnames, 1):
     sys.stderr.write(" No editing found!\n")
     continue
   # plot hist
-  for ii, snp in enumerate(sorted(filter(lambda x: x[-1]=="+", snp2freq)), 1):
-    ax = fig.add_subplot(4, 3, ii)
-    snprc = "".join(base2rc[b] for b in snp)#; print snp, snprc
+  fig, subplots = plt.subplots(4, 3, sharey='all', sharex='all', figsize=(15, 15))
+  fig.suptitle(fn, size=20)
+  for ii, snp in enumerate(sorted(filter(lambda x: x[-1]=="+", snp2freq))):
+    ax = subplots[ii/3][ii%3] 
+    snprc = "".join(base2rc[b] for b in snp)
     data = [[], []]
     if snp in snp2freq:
       data[0] = snp2freq[snprc]
@@ -82,6 +84,7 @@ for i, fn in enumerate(fnames, 1):
     n, bins, patches = ax.hist(data, bins, normed=0, stacked=True, color=['blue', 'red',], label=["+", "-"])
     ax.set_title(snp[:-1])
     ax.grid(True)
+  # make all axis the same scale
   plt.savefig(outfn, dpi=300, transparent=False) #orientation='landscape', 
   
   
