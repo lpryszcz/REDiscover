@@ -44,7 +44,27 @@ def txt2changes(handle, snps, minDepth=20, template="%s>%s%s"):
     snp2freq[snp].append(altfreq)
   return snp2freq
 
-
+def plot_hist(bins, fn, outfn, snp2freq, colors, log=0):
+  """Plot hist"""
+  fig, subplots = plt.subplots(4, 3, sharey='all', sharex='all', figsize=(15, 15))
+  fig.suptitle(fn, size=20)
+  for ii, snp in enumerate(sorted(filter(lambda x: x[-1]=="+", snp2freq))):
+    ax = subplots[ii/3][ii%3] 
+    snprc = "".join(base2rc[b] for b in snp)
+    data = [[], []]
+    if snp in snp2freq:
+      data[0] = snp2freq[snprc]
+    if snprc in snp2freq:
+      data[1] = snp2freq[snprc]
+    n, bins, patches = ax.hist(data, bins, normed=0, stacked=True, color=colors, label=["+", "-"])
+    ax.set_title(snp[:-1])
+    ax.grid(True)
+  # make y axis log
+  if log:  
+    plt.yscale('log')
+  plt.savefig(outfn, dpi=300, transparent=False) #orientation='landscape', 
+  
+  
 bases = "ACGT"
 strands = "+-"
 bins = 20
@@ -56,10 +76,10 @@ if sys.argv[1]=="-s ":
 else:
   snps = {}
   fnames = sys.argv[1:]
-  
+
 # process all files
+colors = ['red', 'red'] #["grey", "grey"] #['blue', 'red',]
 for i, fn in enumerate(fnames, 1):
-  #fig = plt.figure(figsize=(15, 15)) # figsize=(24,16)) # figsize=(11.69,8.27)) #
   # skip if outfn exists and newer than fn
   outfn = "%s.hist.png"%fn
   if os.path.isfile(outfn) and os.stat(fn).st_mtime < os.stat(outfn).st_mtime:
@@ -71,20 +91,6 @@ for i, fn in enumerate(fnames, 1):
     sys.stderr.write(" No editing found!\n")
     continue
   # plot hist
-  fig, subplots = plt.subplots(4, 3, sharey='all', sharex='all', figsize=(15, 15))
-  fig.suptitle(fn, size=20)
-  for ii, snp in enumerate(sorted(filter(lambda x: x[-1]=="+", snp2freq))):
-    ax = subplots[ii/3][ii%3] 
-    snprc = "".join(base2rc[b] for b in snp)
-    data = [[], []]
-    if snp in snp2freq:
-      data[0] = snp2freq[snprc]
-    if snprc in snp2freq:
-      data[1] = snp2freq[snprc]
-    n, bins, patches = ax.hist(data, bins, normed=0, stacked=True, color=['blue', 'red',], label=["+", "-"])
-    ax.set_title(snp[:-1])
-    ax.grid(True)
-  # make all axis the same scale
-  plt.savefig(outfn, dpi=300, transparent=False) #orientation='landscape', 
-  
+  plot_hist(bins, fn, outfn, snp2freq, ['blue', 'grey'], log=0)    
+  plot_hist(bins, fn, outfn.replace('.png', '.log.png'), snp2freq, ['blue', 'blue'], log=1)
   
