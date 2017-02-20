@@ -61,7 +61,13 @@ def get_blocks(a, start, end, baseq, i, basesize):
                 continue
             block[ii*basesize+base2index[b]+i] += 1
         yield prefi, block
-                
+
+def is_antisense(a):
+    """Return 1 if read pair is from antisense strand"""
+    if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
+        return 1
+    return 0
+        
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     """Return 2D array of basecalls from BAM file, as follows
     - 1D positions from start to end
@@ -81,7 +87,7 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
-        if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
+        if is_antisense(a):
             i = len(alphabet)
         for refi, block in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
@@ -201,7 +207,7 @@ def get_consecutive(data, stepsize=1):
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
             
 def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=1000000,
-                        window_size=100, min_strandness=0.9):
+                        window_size=100, min_strandness=0.99):
     """Return chromosome regions covered by at least mincov"""
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
@@ -216,13 +222,13 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step
                 if is_qcfail(a, mapq):
                     continue
                 # store strand info
-                strands[a.pos/window_size, int(a.is_reverse)] += 1
+                strands[a.pos/window_size, is_antisense(a)] += 1
                 # add alg blocks
                 for s, e in a.blocks:
                     coverage[s:e] += 1
             # get strand enrichment
             sums = strands.sum(axis=1)
-            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()
+            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print bam, ref, frac
             if stranded and frac<min_strandness:
                 sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from %s\n"%(frac, bam, ref))
         # get regions with coverage
