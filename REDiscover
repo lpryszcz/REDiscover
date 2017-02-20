@@ -5,6 +5,7 @@ but at the cost of higher false positive.
 
 TBD:
 - editing from heterozygous sites?
+- check how stranded is the dataset
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com

@@ -60,10 +60,11 @@ else:
 for i, fn in enumerate(fnames, 1):
   fig = plt.figure(figsize=(15, 15)) # figsize=(24,16)) # figsize=(11.69,8.27)) #
   fig.suptitle(fn, size=20)
-  print i, fn
+  # skip if outfn exists and newer than fn
   outfn = "%s.hist.png"%fn
-  if os.path.isfile(outfn):
+  if os.path.isfile(outfn) and os.stat(fn).st_mtime < os.stat(outfn).st_mtime:
     continue
+  print i, fn
   # get snps  
   snp2freq = txt2changes(open(fn), snps)
   if not sum(len(x) for x in snp2freq.values()):
