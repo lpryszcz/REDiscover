@@ -5,7 +5,6 @@ but at the cost of higher false positive.
 
 TBD:
 - editing from heterozygous sites?
-- check how stranded is the dataset
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -201,7 +200,8 @@ def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
             
-def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
+def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=1000000,
+                        window_size=100, min_strandness=0.9):
     """Return chromosome regions covered by at least mincov"""
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
@@ -209,14 +209,22 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
         #if ref.startswith('chr'): continue 
         #if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
-        for bam in bams:
+        strands = np.zeros(((length/window_size)+1, 2), dtype='float32')
+        for i, bam in enumerate(bams):
             sam = pysam.Samfile(bam)
             for a in sam.fetch(reference=ref):
                 if is_qcfail(a, mapq):
                     continue
+                # store strand info
+                strands[a.pos/window_size, int(a.is_reverse)] += 1
                 # add alg blocks
                 for s, e in a.blocks:
                     coverage[s:e] += 1
+            # get strand enrichment
+            sums = strands.sum(axis=1)
+            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()
+            if stranded and frac<min_strandness:
+                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from %s\n"%(frac, bam, ref))
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
@@ -311,9 +319,10 @@ def main():
 
     logger("Genotyping...")
     info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq)
+    regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
     if o.threads<2: # this is useful for debugging
         for ref, start, end in regions:
+            continue
             parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                                     o.mapq, o.bcq, o.report_alternatives, o.verbose, ref, start, end)
             for data in parser:
