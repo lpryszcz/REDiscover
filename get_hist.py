@@ -91,6 +91,6 @@ for i, fn in enumerate(fnames, 1):
     sys.stderr.write(" No editing found!\n")
     continue
   # plot hist
-  plot_hist(bins, fn, outfn, snp2freq, ['blue', 'grey'], log=0)    
+  plot_hist(bins, fn, outfn, snp2freq, ['blue', 'grey'], log=0) 
   plot_hist(bins, fn, outfn.replace('.png', '.log.png'), snp2freq, ['blue', 'blue'], log=1)
   

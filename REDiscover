@@ -23,10 +23,15 @@ base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()):
     base2index[b] = i
 
+def is_duplicate(a, pa):
+    """Return True if read is duplicate"""
+    if pa and a.pos==pa.pos and a.flag==pa.flag and a.isize==pa.isize \
+       and a.cigarstring==pa.cigarstring and a.seq==pa.seq:
+        return True
+    
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
-    # a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
-    if a.mapq<mapq or a.flag&3840: 
+    if a.mapq<mapq or a.flag&3840: # a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
         return True
         
 def _match(refi, readi, bases): return refi+bases, readi+bases, True
@@ -71,8 +76,10 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     # stop if ref not in sam file
     if ref not in sam.references:
         return calls.reshape((end-start+1, basesize))
+    pa = None  
     for a in sam.fetch(ref, start, end):
-        if is_qcfail(a, mapq): continue
+        if is_qcfail(a, mapq) or is_duplicate(a, pa): continue
+        pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
         if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
@@ -200,7 +207,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, maxdist=16000, step=1000000):
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
         #if ref.startswith('chr'): continue 
-        #if ref!="chr21": continue
+        if ref!="chr21": continue
         coverage = np.zeros(length, dtype='uint16')
         for bam in bams:
             sam = pysam.Samfile(bam)

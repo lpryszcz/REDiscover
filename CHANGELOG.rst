@@ -6,7 +6,7 @@ v1.15
 - supporting two types of stranded protocols `-fr-secondstrand` and `-fr-firststrand` (for more info: http://salmon.readthedocs.io/en/latest/library_type.html)
 - both reads (read1 & read2) are processed for stranded libraries
   - this wasn't possible with samtools mpileup, so using pysam instead of `samtools mpileup` subprocess
-- using `pysam` required further optimisation for performance (5-6x faster, nearly as fast as `samtools mpileup`)
+- using `pysam` required further optimisation for performance (5-6x faster, as fast as `samtools mpileup`)
   - using `numpy.array`
   - adding read blocks instead of individual bases 
 - stripped mean basecall quality from output
@@ -18,6 +18,7 @@ v1.15
   - annotating from GTF/GFF (TBD)
 - more accurate
   - use stranded info to distinguish between real editing and SNPs (TBD)
+  - recognise and ignore duplicates (even those not annotated)
 
 v1.14
 ~~~~~
