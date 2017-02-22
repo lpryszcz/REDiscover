@@ -19,7 +19,7 @@ v1.15
 - more accurate
   - use stranded info to distinguish between real editing and SNPs (TBD)
   - recognise and ignore duplicates (even those not annotated)
-  - warns about samples with stradness
+  - warn about samples with strandness
 
 v1.14
 ~~~~~

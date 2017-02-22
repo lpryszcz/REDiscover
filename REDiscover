@@ -64,7 +64,11 @@ def get_blocks(a, start, end, baseq, i, basesize):
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand"""
-    if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse:
+    #if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse or not a.is_paired and a.is_reverse:
+    if a.is_reverse:
+        if a.is_read1 or not a.is_paired:
+            return 1
+    elif a.is_read2:
         return 1
     return 0
         
@@ -119,7 +123,7 @@ def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
     # define strands
     if not stranded:
         strands = "."  # unstranded
-    if stranded=="firststrand":
+    elif stranded=="firststrand":
         strands = "+-" # dUTP, NSR, NNSR
     else:
         strands = "-+" # Illumina or Standard Solid
@@ -181,7 +185,7 @@ def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, 
             bases, freqs = get_major_alleles(bases, freqs)
 
             if len(bases) > 1:
-                info = "[WARNING] More than 1 alternative alleles: %s:%s %s %s %s\n"
+                info = "[WARNING] More than 1 alternative allele: %s:%s %s %s %s\n"
                 sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases), str(freqs)))
                 continue
                 
@@ -228,7 +232,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step
                     coverage[s:e] += 1
             # get strand enrichment
             sums = strands.sum(axis=1)
-            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print bam, ref, frac
+            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print ref, bam, frac
             if stranded and frac<min_strandness:
                 sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from %s\n"%(frac, bam, ref))
         # get regions with coverage
@@ -328,7 +332,6 @@ def main():
     regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
     if o.threads<2: # this is useful for debugging
         for ref, start, end in regions:
-            continue
             parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
                                     o.mapq, o.bcq, o.report_alternatives, o.verbose, ref, start, end)
             for data in parser:
