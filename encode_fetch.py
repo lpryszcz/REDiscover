@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-desc="""
+desc="""Fetch info from ENCODE about experiments for given assays.
+If more than one assay give, it will only fetch runs that overlap
+for the same assay donor in all assays.
+
 """
 epilog="""Author: l.p.pryszcz+git@gmail.com
 Warsaw, 1/02/2017
@@ -100,6 +103,8 @@ def update_donors(donors, experiment, assemblies=["hg19",],
 
 def encode_fetch(out, assays, species, assemblies, verbose=1, onlystranded=1):
     """Save experiments having RNase-seq and RNA-seq from the same donors"""
+    www = "https://www.encodeproject.org"
+    
     if verbose:
         logger("Parsing experiments...")
     donor2experiments = {}
@@ -112,12 +117,15 @@ def encode_fetch(out, assays, species, assemblies, verbose=1, onlystranded=1):
             donor2experiments[assay_title] = update_donors(donor2experiments[assay_title], experiment, assemblies)
         logger("  %s donors for %s runs"%(len(donor2experiments[assay_title]), sum(len(x) for x in donor2experiments[assay_title].itervalues())))
 
-    # print common
-    intersection = set(donor2experiments[assays[0]]).intersection(donor2experiments[assays[1]])
-    logger("Donors intersection: %s"%len(intersection), 1)
+    # get intersection
+    cmd2 = ""
+    intersection = set(donor2experiments[assays[0]])
+    for i in range(1, len(assays)): 
+        intersection = intersection.intersection(donor2experiments[assays[i]])
+        logger("Donors intersection: %s"%len(intersection), 1)
+        cmd2 = "~/src/REDiscover/REDiscover -o REDiscover/%s.%s.txt -r %s -d %s -s -t 16 -v >> REDiscover/%s.%s.txt.log 2>&1 &\n"
 
-    www = "https://www.encodeproject.org"
-    cmd2 = "~/src/REDiscover/REDiscover -o REDiscover/%s.%s.txt -r %s -d %s -s -t 16 -v >> REDiscover/%s.%s.txt.log 2>&1 &\n"
+    # generate commands to download
     for donor in intersection:
         fnames = []
         for a in assays:
@@ -137,6 +145,7 @@ def encode_fetch(out, assays, species, assemblies, verbose=1, onlystranded=1):
                 fnames[-1][name].append(outfn)
         # store REDiscover command
         ## store also stranded or not info here!!
+        if not cmd2: continue     
         for name in fnames[0]:
             out.write(cmd2%(donor, name, " ".join(fnames[0][name]), 
                             " ".join(v for vals in fnames[1].values() for v in vals), donor, name))
