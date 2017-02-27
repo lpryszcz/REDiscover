@@ -137,10 +137,12 @@ def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
     for pos, (dnacall, rnacalls) in enumerate(zip(dnaparser, rnaparser), start+1):
         if sum(dnacall)<minDepth:
             continue
-        for strand, rnacall in zip(strands, rnacalls):
+        '''for strand, rnacall in zip(strands, rnacalls):
             if sum(rnacall)<minDepth:
                 continue
-            yield ref, pos, strand, dnacall, rnacall
+            yield ref, pos, strand, dnacall, rnacall'''
+        strand_info = sorted(zip(rnacalls, strands), key=lambda x: sum(x[0]), reverse=1)
+        yield ref, pos, dnacall, strand_info
 
 def get_major_alleles(bases, freqs, maxfrac=0.33):
     """Return two lists: major alleles and their frequeinces"""
@@ -164,34 +166,46 @@ def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, 
                    report_alternatives, verbose, ref="", start="", end=""):
     """Return RNA editing positions"""
     parser = get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
-    for contig, pos, strand, refbases, sbases in parser:
+    #for contig, pos, strand, refbases, sbases in parser:
+    for contig, pos, refbases, strand_info in parser:
         baseRef, refFreq = get_allele_freqs(refbases, minDNAfreq)
-        bases, freqs = get_allele_freqs(sbases, minRNAfreq)
-        if not baseRef or not bases or bases==baseRef:
-            continue
-
+        if not baseRef: continue
         # keep only major allele(s) - not needed currently
         #baseRef, refFreq = get_major_alleles(baseRef, refFreq)
+
+        pbases = set()
+        for sbases, strand in strand_info:
+            if sum(sbases)<minDepth: continue
             
-        # remove ref base from alternative bases
-        refBase = baseRef[0]
-        if refBase in bases:
-            idx = bases.index(refBase)
-            bases.pop(idx)
-            freqs.pop(idx)
+            bases, freqs = get_allele_freqs(sbases, minRNAfreq)
+            if not bases or bases==baseRef: continue
+            
+            # remove ref base from alternative bases
+            refBase = baseRef[0]
+            if refBase in bases:
+                idx = bases.index(refBase)
+                bases.pop(idx)
+                freqs.pop(idx)
 
-        if not report_alternatives:
-            # keep only major allele(s) from sample, but after removing ref allele
-            bases, freqs = get_major_alleles(bases, freqs)
+            if not report_alternatives:
+                # keep only major allele(s) from sample, but after removing ref allele
+                bases, freqs = get_major_alleles(bases, freqs)
 
-            if len(bases) > 1:
-                info = "[WARNING] More than 1 alternative allele: %s:%s %s %s %s\n"
-                sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases), str(freqs)))
-                continue
-                
-        # report 
-        for altbase, altfreq in zip(bases, freqs):
-            yield contig, pos, strand, refBase, altbase, sum(refbases), refFreq[0], sum(sbases), altfreq
+                if len(bases) > 1:
+                    info = "[WARNING] More than 1 alternative allele: %s:%s %s %s %s\n"
+                    sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases), str(freqs)))
+                    continue
+
+            # report 
+            for altbase, altfreq in zip(bases, freqs):
+                # skip signal from antisense if altbase already added and 5x lower coverage
+                ## this is not perfect, as it'll ignore also higher freq editing from sense
+                ## if antisense has much higher coverage but low freq
+                if altbase in pbases: # and 2.*sum(sbases)<pcov:
+                    continue
+                yield contig, pos, strand, refBase, altbase, sum(refbases), refFreq[0], sum(sbases), altfreq
+            # store variables
+            pbases = set(bases)
 
 def init_args(*args):
     global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose
@@ -234,7 +248,7 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step
             sums = strands.sum(axis=1)
             frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print ref, bam, frac
             if stranded and frac<min_strandness:
-                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from %s\n"%(frac, bam, ref))
+                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from chromosome %s\n"%(frac, bam, ref))
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
@@ -353,7 +367,5 @@ if __name__=='__main__':
         main()
     except KeyboardInterrupt:
         sys.stderr.write("\nCtrl-C pressed!      \n")
-    except IOError as e:
-        sys.stderr.write("I/O error({0}): {1}\n".format(e.errno, e.strerror))
     dt = datetime.now()-t0
     sys.stderr.write("#Time elapsed: %s\n" % dt)

@@ -17,9 +17,9 @@ v1.15
   - plotting frequency histogram
   - annotating from GTF/GFF (TBD)
 - more accurate
-  - use stranded info to distinguish between real editing and SNPs (TBD)
   - recognise and ignore duplicates (even those not annotated)
   - warn about samples with strandness
+  - skip SNPs from antisense having coverage lower than sense strand (useful for poorly stranded samples)
 
 v1.14
 ~~~~~

@@ -22,6 +22,8 @@ def txt2changes(editing, handle, snps, minDepth=20, template="%s>%s%s"):
         # REDiscover output
         if len(ldata)>4:
             chrom, pos, strand, ref, alt = ldata[:5]
+            if not chrom.startswith('chr'):
+                chrom = "chr%s"%chrom
             altcov, altfreq = ldata[-2:]
             altcov, altfreq = int(altcov), float(altfreq)
             # skip if known snp or low cov
