@@ -16,7 +16,7 @@ import os, sys, pysam, resource
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
-from REDiscover import bam2calls, base2index
+from REDiscover import bam2calls, base2index, get_covered_regions
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -77,7 +77,7 @@ def load_positions(fname):
         ref, alt, strand = snp[0], snp[2], snp[3]
         yield chrom, pos, ref, alt, strand
 
-def calculate_differential_editing(tmpfn, position, rna, stranded, mapq, bcq, threads, verbose):
+def calculate_differential_editing(tmpfn, positionfn, rna, stranded, mapq, bcq, threads, verbose):
     """Calculate alternative base coverage and frequency for every bam file"""
     out = open(tmpfn, "w")
     runinfo = " ".join(sys.argv)
@@ -93,7 +93,7 @@ def calculate_differential_editing(tmpfn, position, rna, stranded, mapq, bcq, th
             os.system(cmd)
 
     logger("Genotyping...")
-    positions = load_positions(positions)
+    positions = load_positions(positionfn)
     if threads<2: # this is useful for debugging
         for position in positions:
             parser = diff_editing(position, rna, stranded, mapq, bcq, verbose)
@@ -207,10 +207,10 @@ def main():
     tmpfn = o.positions+".diff.tsv"
     if not os.path.isfile(tmpfn) or not open(tmpfn).readline():
         logger("Calculating differential editing...")
-        calculate_differential_editing(tmpfn, position, o.rna, o.stranded, o.mapq, o.bcq, o.threads, o.verbose)
-
+        calculate_differential_editing(tmpfn, o.positions, o.rna, o.stranded, o.mapq, o.bcq, o.threads, o.verbose)
+    return
     logger("Processing...")
-    #plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
+    plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
     logger("Done!")
         
 if __name__=='__main__': 

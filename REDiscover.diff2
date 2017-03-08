@@ -1,0 +1,316 @@
+#!/usr/bin/env python
+desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
+Alternatively, reference genome can be used instead of DNAseq,
+but at the cost of higher false positive. 
+
+TBD:
+- editing from heterozygous sites?
+"""
+epilog="""Author:
+l.p.pryszcz@gmail.com
+
+Warsaw/Bratislava/Fribourg, 21/07/2015
+"""
+
+import os, sys, pysam, resource
+from datetime import datetime
+from multiprocessing import Pool
+import numpy as np
+from REDiscover import base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from sklearn import decomposition
+        
+def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
+    """Return 2D array of basecalls from BAM file, as follows
+    - 1D positions from start to end
+    - 2D base counts for ACGT from sense and antisense strand at given position
+    """
+    sam = pysam.AlignmentFile(bam)
+    # ACGT x2 for each strand
+    basesize = 2*len(alphabet)
+    n =  basesize * (end-start+1)
+    calls = np.zeros(n, dtype="int64") #(end-start+1, 2, basesize)
+    # stop if ref not in sam file
+    if ref not in sam.references:
+        return calls.reshape((end-start+1, 2, len(alphabet)))
+    pa = None  
+    for a in sam.fetch(ref, start, end):
+        if is_qcfail(a, mapq) or is_duplicate(a, pa): continue
+        pa = a
+        # get transcript strand
+        i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
+        if is_antisense(a):
+            i = len(alphabet)
+        for refi, block in get_blocks(a, start, end, baseq, i, basesize):
+            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
+            calls[s:e] += block
+    return calls.reshape((end-start+1, 2, len(alphabet)))
+
+def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose):
+    """Return RNA editing positions"""
+    # define strands
+    if not stranded:
+        strands = "."  # unstranded
+    elif stranded=="firststrand":
+        strands = "+-" # dUTP, NSR, NNSR
+    else:
+        strands = "-+" # Illumina or Standard Solid
+    info = []
+    posinfo = "%s\t%s\t%s>%s%s"
+    ref, start, end = position
+    refparser = fasta2calls(fasta, ref, start, end)    
+    parsers = [bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams]
+    for pos, calls in enumerate(zip(refparser, *parsers), start+1):
+        refcall, bamcalls = calls[0], np.array(calls[1:])
+        #print ref, pos, len(calls), refcall, bamcalls
+        # low dna coverage ie. N
+        refcov = sum(refcall)
+        if refcov < minDepth:
+            continue
+        refi = np.argmax(refcall)
+        #reffreq = 1.*alphabet[refi]/refcov
+        refbase = alphabet[refi]
+        # collapse both strands for unstranded data
+        if not stranded:
+            bamcalls = bamcalls.sum(axis=1)
+        # process strands
+        for si, strand in enumerate(strands):
+            # skip if low coverage in all samples
+            coverage = bamcalls[:, si].sum(axis=1)
+            if coverage.max() < minDepth:
+                continue
+            # process alt bases
+            for bi, base in enumerate(alphabet):
+                # skip reference and if less than 3 reads per allele
+                if bi==refi or bamcalls[:, si, bi].max()<3:
+                    continue
+                # store if freq of at least one larger than minfreq
+                freqs = 1.* bamcalls[:, si, bi] / coverage
+                if freqs.max() >= minAltfreq:
+                    info.append(posinfo%(ref, pos, refbase, alphabet[bi], strand) + 
+                                "\t".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)))
+    return "\n".join(info)+"\n"
+    
+def init_args(*args):
+    global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
+    fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose = args
+    
+def worker(position):
+    global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
+    return diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose)
+    
+def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
+    """Report nicely formatted stream to stderr"""
+    memory = timestamp = ""
+    if add_timestamp:
+        timestamp = "[%s] "%datetime.ctime(datetime.now())
+    if add_memory:
+        memory = " [memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
+    out.write("%s%s%s\n"%(timestamp, info, memory))
+
+def get_consecutive(data, stepsize=1):
+    """Return consecutive windows allowing given max. step size"""
+    return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
+    
+def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=1000000,
+                                window_size=100, min_strandness=0.99):
+    """Return chromosome regions covered by at least mincov. """
+    sam = pysam.Samfile(bams[0])
+    references, lengths = sam.references, sam.lengths
+    for ref, length in zip(references, lengths):
+        if ref!="25": continue
+        coverage = np.zeros((len(bams), length), dtype='uint16')
+        strands = np.zeros(((length/window_size)+1, 2), dtype='float32')
+        for i, bam in enumerate(bams):
+            sam = pysam.Samfile(bam)
+            for a in sam.fetch(reference=ref):
+                if is_qcfail(a, mapq):
+                    continue
+                # store strand info
+                strands[a.pos/window_size, is_antisense(a)] += 1
+                # add alg blocks
+                for s, e in a.blocks:
+                    coverage[i, s:e] += 1
+            # get strand enrichment
+            sums = strands.sum(axis=1)
+            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print ref, bam, frac
+            if stranded and frac<min_strandness:
+                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from chromosome %s\n"%(frac, bam, ref))
+        # get max coverage from all bams for each position
+        coverage = coverage.max(axis=0)
+        # get regions with coverage
+        covered = np.where(coverage>=mincov)[0]
+        for positions in get_consecutive(covered, maxdist):
+            if len(positions)<1:
+                continue
+            s, e = positions[0]+1, positions[-1]+1
+            # further split regions for max 1M windows
+            while s < e-step:
+                yield ref, s, s+step
+                s += step
+            yield ref, s, e
+
+def load_bed(fname):
+    """Return regions from BED file"""
+    for l in open(fname):
+        if l.startswith('#'):
+            continue
+        ref, start, end = l[:-1].split('\t')[:3]
+        start, end = map(int, (start, end))
+        yield ref, start, end
+            
+def calculate_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq,
+                                   threads, verbose):
+    """Calculate alternative base coverage and frequency for every bam file"""
+    out = open(tmpfn, "w")
+    runinfo = " ".join(sys.argv)
+    header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
+    out.write(header)
+
+    logger("Indexing bam file(s)...")
+    for fn in rna:
+        if not os.path.isfile(fn+".bai"):
+            cmd = "samtools index %s"%fn
+            if verbose:
+                sys.stderr.write(" %s\n"%cmd)
+            os.system(cmd)
+
+    logger("Genotyping...")
+    if regionsfn:
+        regions = load_bed(regionsfn)
+    else:
+        regions = get_covered_regions_per_bam(rna, minDepth, stranded)
+        
+    if threads<2: # this is useful for debugging
+        for region in regions:
+            parser = diff_editing(region, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
+            for data in parser:
+                out.write(data)
+    else:
+        initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
+        p = Pool(threads, initializer=init_args, initargs=initargs)
+        parser = p.imap(worker, regions, chunksize=100)
+        for data in parser:
+            out.write(data)
+
+    out.write("#Finished!\n")
+    out.close()
+
+def fn2tissue(fn): return os.path.basename(fn).split('.')[1]
+def fn2donor(fn): return os.path.basename(fn).split('.')[0]
+def fn2replica(fn): return '.'.join(os.path.basename(fn).split('.')[:2])
+    
+def plot_PCA(tmpfn, outbase, bams, minDepth, minAltfreq, verbose, n=3, frac=0.33):
+    """Plot PCA"""
+    # load array
+    d = np.loadtxt(tmpfn, usecols=range(3,3+len(bams)*2))
+    # reshape bam x snps x (cov, freq)
+    d2 = d.reshape(len(bams), d.shape[0], 2)
+    selected_samples = np.sum(d2[:,:,0]>=minDepth, axis=1)>=frac*d2.shape[1]
+    d2 = d2[selected_samples]
+    selected_snps = np.sum(d2[:,:,0]>=minDepth, axis=0)>=frac*d2.shape[0]
+    X = d2[:, selected_snps, 1]>=minAltfreq
+    
+    classes = []
+    tissues = {}
+    fn2class = []
+    for i, fn in enumerate(bams):
+        # skip if not in selected
+        if not selected_samples[i]:
+            sys.stderr.write(" %s skipped.\n"%fn)
+            continue
+        tissue = fn2tissue(fn) # fn2donor(fn) # fn2replica(fn) #
+        if tissue not in tissues:
+            tissues[tissue] = len(tissues)
+        classes.append(tissues[tissue])
+    y = np.array(classes)#, dtype=float)
+    print d2.shape, X.shape, len(y), len(tissues), tissues
+        
+    # http://scikit-learn.org/stable/auto_examples/decomposition/plot_pca_iris.html    
+    fig = plt.figure(1, figsize=(4, 3))
+    ax = Axes3D(fig, rect=[0, 0, .95, 1], elev=48, azim=134) # plt.subplot(111) #
+
+    plt.cla()
+    pca = decomposition.PCA(n_components=n)
+    pca.fit(X)
+    X = pca.transform(X)
+    print X.shape, pca.explained_variance_ratio_
+    
+    colors = plt.cm.Paired(np.linspace(0, 1, len(tissues)))
+    markers = 'xopsv<^>*h'
+    for tissue, label in tissues.iteritems():
+        ax.scatter(X[y==label, 0], X[y==label, 1], X[y==label, 2],
+                   label=tissue, color=colors[label], marker=markers[label%len(markers)])
+    '''
+    ax.w_xaxis.set_ticklabels([])
+    ax.w_yaxis.set_ticklabels([])
+    ax.w_zaxis.set_ticklabels([])
+    ''' 
+    ax.legend(loc='upper left', numpoints=1, ncol=3, fontsize=8)#, bbox_to_anchor=(0, 0))
+    plt.show()
+
+def main():
+    import argparse
+    usage  = "%(prog)s [options]" 
+    parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
+                                      formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
+    parser.add_argument('--version', action='version', version='1.15b')
+    parser.add_argument("-o", "--outbase", required=1, help="output file")
+    parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
+    refpar = parser.add_mutually_exclusive_group(required=True)
+    refpar.add_argument("-d", "--dna", nargs="*", default = [],  help="input DNA-Seq BAM file(s)")
+    refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
+    parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
+    parser.add_argument("-s", "--stranded", "-fr-secondstrand", default=False, action="store_true", 
+                        help="stranded RNAseq libraries ie. Illumina or Standard Solid")
+    parser.add_argument("-fr-firststrand", default=False, action="store_true", 
+                        help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
+    parser.add_argument("--minDepth", default=5,  type=int,
+                        help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("--minAltfreq",  default=0.01, type=float,
+                        help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+    
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
+    o = parser.parse_args()
+    if o.verbose:
+        sys.stderr.write("Options: %s\n"%str(o))
+     
+    # mark stranded protocol
+    if o.fr_firststrand:
+        o.stranded = "firststrand"
+    
+    # check if all input files exists
+    for fn in o.rna:
+        if not os.path.isfile(fn):
+            sys.stderr.write("No such file: %s\n"%fn)
+            sys.exit(1)
+
+    # calculate differential editing if file doesn't exist
+    tmpfn = o.outbase+".diff.tsv"
+    if not os.path.isfile(tmpfn) or not open(tmpfn).readline():
+        logger("Calculating differential editing...")
+        calculate_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
+                                       o.threads, o.verbose)
+    return
+    logger("Processing...")
+    plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
+    logger("Done!")
+        
+if __name__=='__main__': 
+    t0 = datetime.now()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nCtrl-C pressed!      \n")
+    dt = datetime.now()-t0
+    sys.stderr.write("#Time elapsed: %s\n" % dt)
