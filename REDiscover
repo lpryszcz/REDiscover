@@ -291,8 +291,8 @@ def main():
                         help="report sites with more than 1 alternative alleles")
     parser.add_argument("--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
-    parser.add_argument("--minAltReads", default=3,  type=int,
-                        help="minimum no. of reads with alternative base to call RNA editing [%(default)s]")
+    #parser.add_argument("--minAltReads", default=3,  type=int,
+    #                    help="minimum no. of reads with alternative base to call RNA editing [%(default)s]")
     parser.add_argument("--minRNAfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("--minDNAfreq",  default=0.99, type=float,

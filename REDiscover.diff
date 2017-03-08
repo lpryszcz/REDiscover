@@ -1,0 +1,223 @@
+#!/usr/bin/env python
+desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
+Alternatively, reference genome can be used instead of DNAseq,
+but at the cost of higher false positive. 
+
+TBD:
+- editing from heterozygous sites?
+"""
+epilog="""Author:
+l.p.pryszcz@gmail.com
+
+Warsaw/Bratislava/Fribourg, 21/07/2015
+"""
+
+import os, sys, pysam, resource
+from datetime import datetime
+from multiprocessing import Pool
+import numpy as np
+from REDiscover import bam2calls, base2index
+
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from sklearn import decomposition
+
+def diff_editing(position, bams, stranded, mapq, baseq, verbose):
+    """Return RNA editing positions"""
+    info = ["%s\t%s\t%s>%s%s"%position,]
+    chrom, pos, ref, alt, strand = position
+    parser = (bam2calls(bam, chrom, pos-1, pos, mapq, baseq) for bam in bams)
+    for i, call in enumerate(parser):
+        # select by strand
+        #print call.shape, call
+        call = call[0]
+        if not stranded: 
+            bases = call[:4] + call[4:]
+        elif stranded=="firststrand":
+            if strand=="+":
+                bases = call[:4]
+            else:
+                bases = call[4:]
+        elif strand=="+":
+            bases = call[4:]
+        elif strand=="-":
+            bases = call[:4]
+        # get coverage and alt base freq
+        cov = sum(bases)
+        if cov:    
+            freq = 1.*bases[base2index[alt]] / cov
+        else:
+            freq = 0
+        info.append("\t%s\t%.3f"%(cov, freq))
+    return "\t".join(info)+"\n"
+    
+def init_args(*args):
+    global bams, stranded, mapq, baseq, verbose
+    bams, stranded, mapq, baseq, verbose = args
+    
+def worker(position):
+    global bams, stranded, mapq, baseq, verbose
+    return diff_editing(position, bams, stranded, mapq, baseq, verbose)
+    
+def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
+    """Report nicely formatted stream to stderr"""
+    memory = timestamp = ""
+    if add_timestamp:
+        timestamp = "[%s] "%datetime.ctime(datetime.now())
+    if add_memory:
+        memory = " [memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
+    out.write("%s%s%s\n"%(timestamp, info, memory))
+
+def load_positions(fname):
+    """Generator of RNA editing positions"""
+    for l in open(fname):
+        if l.startswith('#'): continue
+        chrom, pos, snp, count = l[:-1].split('\t')
+        pos, count = map(int, (pos, count))
+        ref, alt, strand = snp[0], snp[2], snp[3]
+        yield chrom, pos, ref, alt, strand
+
+def calculate_differential_editing(tmpfn, position, rna, stranded, mapq, bcq, threads, verbose):
+    """Calculate alternative base coverage and frequency for every bam file"""
+    out = open(tmpfn, "w")
+    runinfo = " ".join(sys.argv)
+    header = "## %s\n#chr\tpos\tsnp\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
+    out.write(header)
+
+    logger("Indexing bam file(s)...")
+    for fn in rna:
+        if not os.path.isfile(fn+".bai"):
+            cmd = "samtools index %s"%fn
+            if verbose:
+                sys.stderr.write(" %s\n"%cmd)
+            os.system(cmd)
+
+    logger("Genotyping...")
+    positions = load_positions(positions)
+    if threads<2: # this is useful for debugging
+        for position in positions:
+            parser = diff_editing(position, rna, stranded, mapq, bcq, verbose)
+            for data in parser:
+                out.write(data)
+    else:
+        initargs = (rna, stranded, mapq, bcq, verbose)
+        p = Pool(threads, initializer=init_args, initargs=initargs)
+        parser = p.imap(worker, positions, chunksize=100)
+        for data in parser:
+            out.write(data)
+
+    out.write("#Finished!\n")
+    out.close()
+
+def fn2tissue(fn): return os.path.basename(fn).split('.')[1]
+def fn2donor(fn): return os.path.basename(fn).split('.')[0]
+def fn2replica(fn): return '.'.join(os.path.basename(fn).split('.')[:2])
+    
+def plot_PCA(tmpfn, outbase, bams, minDepth, minAltfreq, verbose, n=3, frac=0.33):
+    """Plot PCA"""
+    # load array
+    d = np.loadtxt(tmpfn, usecols=range(3,3+len(bams)*2))
+    # reshape bam x snps x (cov, freq)
+    d2 = d.reshape(len(bams), d.shape[0], 2)
+    selected_samples = np.sum(d2[:,:,0]>=minDepth, axis=1)>=frac*d2.shape[1]
+    d2 = d2[selected_samples]
+    selected_snps = np.sum(d2[:,:,0]>=minDepth, axis=0)>=frac*d2.shape[0]
+    X = d2[:, selected_snps, 1]>=minAltfreq
+    
+    classes = []
+    tissues = {}
+    fn2class = []
+    for i, fn in enumerate(bams):
+        # skip if not in selected
+        if not selected_samples[i]:
+            sys.stderr.write(" %s skipped.\n"%fn)
+            continue
+        tissue = fn2tissue(fn) # fn2donor(fn) # fn2replica(fn) #
+        if tissue not in tissues:
+            tissues[tissue] = len(tissues)
+        classes.append(tissues[tissue])
+    y = np.array(classes)#, dtype=float)
+    print d2.shape, X.shape, len(y), len(tissues), tissues
+        
+    # http://scikit-learn.org/stable/auto_examples/decomposition/plot_pca_iris.html    
+    fig = plt.figure(1, figsize=(4, 3))
+    ax = Axes3D(fig, rect=[0, 0, .95, 1], elev=48, azim=134) # plt.subplot(111) #
+
+    plt.cla()
+    pca = decomposition.PCA(n_components=n)
+    pca.fit(X)
+    X = pca.transform(X)
+    print X.shape, pca.explained_variance_ratio_
+    
+    colors = plt.cm.Paired(np.linspace(0, 1, len(tissues)))
+    markers = 'xopsv<^>*h'
+    for tissue, label in tissues.iteritems():
+        ax.scatter(X[y==label, 0], X[y==label, 1], X[y==label, 2],
+                   label=tissue, color=colors[label], marker=markers[label%len(markers)])
+    '''
+    ax.w_xaxis.set_ticklabels([])
+    ax.w_yaxis.set_ticklabels([])
+    ax.w_zaxis.set_ticklabels([])
+    ''' 
+    ax.legend(loc='upper left', numpoints=1, ncol=3, fontsize=8)#, bbox_to_anchor=(0, 0))
+    plt.show()
+
+def main():
+    import argparse
+    usage  = "%(prog)s [options]" 
+    parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
+                                      formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
+    parser.add_argument('--version', action='version', version='1.15b')
+    parser.add_argument("-o", "--outbase", help="output file")
+    parser.add_argument("-p", "--positions", required=1, help="file with positions")
+    parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
+    parser.add_argument("-s", "--stranded", "-fr-secondstrand", default=False, action="store_true", 
+                        help="stranded RNAseq libraries ie. Illumina or Standard Solid")
+    parser.add_argument("-fr-firststrand", default=False, action="store_true", 
+                        help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
+    parser.add_argument("--minDepth", default=5,  type=int,
+                        help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("--minAltfreq",  default=0.01, type=float,
+                        help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+    
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
+    o = parser.parse_args()
+    if o.verbose:
+        sys.stderr.write("Options: %s\n"%str(o))
+     
+    # mark stranded protocol
+    if o.fr_firststrand:
+        o.stranded = "firststrand"
+    
+    # check if all input files exists
+    for fn in o.rna:
+        if not os.path.isfile(fn):
+            sys.stderr.write("No such file: %s\n"%fn)
+            sys.exit(1)
+
+    # calculate differential editing if file doesn't exist
+    tmpfn = o.positions+".diff.tsv"
+    if not os.path.isfile(tmpfn) or not open(tmpfn).readline():
+        logger("Calculating differential editing...")
+        calculate_differential_editing(tmpfn, position, o.rna, o.stranded, o.mapq, o.bcq, o.threads, o.verbose)
+
+    logger("Processing...")
+    #plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
+    logger("Done!")
+        
+if __name__=='__main__': 
+    t0 = datetime.now()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nCtrl-C pressed!      \n")
+    dt = datetime.now()-t0
+    sys.stderr.write("#Time elapsed: %s\n" % dt)
