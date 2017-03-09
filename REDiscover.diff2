@@ -72,9 +72,9 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
         refi = np.argmax(refcall)
         #reffreq = 1.*alphabet[refi]/refcov
         refbase = alphabet[refi]
-        # collapse both strands for unstranded data
+        # collapse both strands for unstranded data, without changing dimensions
         if not stranded:
-            bamcalls = bamcalls.sum(axis=1)
+            bamcalls[:, 0] += bamcalls[:, 1]
         # process strands
         for si, strand in enumerate(strands):
             # skip if low coverage in all samples
@@ -90,8 +90,8 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if freqs.max() >= minAltfreq:
                     info.append(posinfo%(ref, pos, refbase, alphabet[bi], strand) + 
-                                "\t".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)))
-    return "\n".join(info)+"\n"
+                                "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
+    return "".join(info)
     
 def init_args(*args):
     global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
@@ -120,7 +120,7 @@ def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=160
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        if ref!="25": continue
+        #if ref!="25": continue
         coverage = np.zeros((len(bams), length), dtype='uint16')
         strands = np.zeros(((length/window_size)+1, 2), dtype='float32')
         for i, bam in enumerate(bams):
@@ -161,9 +161,8 @@ def load_bed(fname):
         start, end = map(int, (start, end))
         yield ref, start, end
             
-def calculate_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq,
-                                   threads, verbose):
-    """Calculate alternative base coverage and frequency for every bam file"""
+def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, threads, verbose):
+    """Get alternative base coverage and frequency for every bam file"""
     out = open(tmpfn, "w")
     runinfo = " ".join(sys.argv)
     header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
@@ -191,7 +190,7 @@ def calculate_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAl
     else:
         initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
         p = Pool(threads, initializer=init_args, initargs=initargs)
-        parser = p.imap(worker, regions, chunksize=100)
+        parser = p.imap(worker, regions)#, chunksize=100)
         for data in parser:
             out.write(data)
 
@@ -230,7 +229,7 @@ def plot_PCA(tmpfn, outbase, bams, minDepth, minAltfreq, verbose, n=3, frac=0.33
         
     # http://scikit-learn.org/stable/auto_examples/decomposition/plot_pca_iris.html    
     fig = plt.figure(1, figsize=(4, 3))
-    ax = Axes3D(fig, rect=[0, 0, .95, 1], elev=48, azim=134) # plt.subplot(111) #
+    ax = plt.subplot(111) # Axes3D(fig, rect=[0, 0, .95, 1], elev=48, azim=134) #
 
     plt.cla()
     pca = decomposition.PCA(n_components=n)
@@ -241,13 +240,9 @@ def plot_PCA(tmpfn, outbase, bams, minDepth, minAltfreq, verbose, n=3, frac=0.33
     colors = plt.cm.Paired(np.linspace(0, 1, len(tissues)))
     markers = 'xopsv<^>*h'
     for tissue, label in tissues.iteritems():
-        ax.scatter(X[y==label, 0], X[y==label, 1], X[y==label, 2],
+        ax.scatter(X[y==label, 0], X[y==label, 1], #X[y==label, 2],
                    label=tissue, color=colors[label], marker=markers[label%len(markers)])
-    '''
-    ax.w_xaxis.set_ticklabels([])
-    ax.w_yaxis.set_ticklabels([])
-    ax.w_zaxis.set_ticklabels([])
-    ''' 
+
     ax.legend(loc='upper left', numpoints=1, ncol=3, fontsize=8)#, bbox_to_anchor=(0, 0))
     plt.show()
 
@@ -299,8 +294,8 @@ def main():
     tmpfn = o.outbase+".diff.tsv"
     if not os.path.isfile(tmpfn) or not open(tmpfn).readline():
         logger("Calculating differential editing...")
-        calculate_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
-                                       o.threads, o.verbose)
+        get_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
+                                 o.threads, o.verbose)
     return
     logger("Processing...")
     plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)

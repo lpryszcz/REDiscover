@@ -1,7 +1,11 @@
 #!/usr/bin/env python
-# Return enrichment of cannonical editing
+desc="""Return enrichment of various types of editing
+"""
+epilog="""Author:
+l.p.pryszcz@gmail.com
 
-# USAGE: ./get_enrichment.py [-s snps.vcf] file1.txt [... fileN.txt]
+Warsaw/Bratislava/Fribourg, 21/07/2015
+"""
 
 import os, sys
 import numpy as np
@@ -12,15 +16,15 @@ strands = "+-"
 bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
-def txt2changes(editing, handle, snps, minDepth=20, template="%s>%s%s"):
+def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
     for l in handle:
-        ldata = l[:-1].split('\t')
+        ldata = l.replace('\t\t','\t')[:-1].split('\t')
         if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
             continue
         # REDiscover output
-        if len(ldata)>4:
+        if ldata[2] in '+-.': #len(ldata)>4
             chrom, pos, strand, ref, alt = ldata[:5]
             if not chrom.startswith('chr'):
                 chrom = "chr%s"%chrom
@@ -30,6 +34,13 @@ def txt2changes(editing, handle, snps, minDepth=20, template="%s>%s%s"):
             if altcov < minDepth or chrom in snps and int(pos) in snps[chrom]:
                 continue
             snp = template%(ref, alt, strand)
+        # REDiscover.diff2 output
+        elif len(ldata)>4:
+            chrom, pos, snp = ldata[:3]
+            sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
+            passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq))# & (sampledata[:, 1]<1.0))
+            #print passed, ldata[3:]
+            if passed<minSamples: continue
         # common.txt
         else:
             chrom, pos, snp = ldata[:3]
@@ -47,21 +58,12 @@ def txt2changes(editing, handle, snps, minDepth=20, template="%s>%s%s"):
             editing[chrom][k] += 1
     return editing, snp2c
 
-def main():
-    if sys.argv[1]=="-s":
-        snps = load_dbSNP(sys.argv[2])
-        fnames = sys.argv[3:]
-    else:
-        snps = {}
-        fnames = sys.argv[1:]
-
+def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out=sys.stdout):
     # process all files
     editing = {}
-    snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
-    print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
     for fn in fnames:
         try:
-            editing, snp2c = txt2changes(editing, open(fn), snps, minDepth=0)
+            editing, snp2c = txt2changes(editing, open(fn), snps, minDepth, minAltfreq, minsamples)
         except Exception, e:
             sys.stderr.write("[ERROR] Couldn't parse %s with error: %s\n"%(fn, str(e)))
             continue
@@ -79,7 +81,7 @@ def main():
             strands.append((snp2c[snp], snp2c[snp[:-1]+"-"]))
         strands = np.array(strands, dtype="float32")
         frac = sum(strands.max(axis=1))/strands.sum()
-        print "%s\t%s\t%s\t%s"%(fn, total, frac, "\t".join(map(str, freqs)))
+        print "%s %s\t%s\t%s\t%s"%(fn, minsamples, total, frac, "\t".join(map(str, freqs)))
 
     # don't output common txt for single file
     if len(fnames)>1:
@@ -87,6 +89,37 @@ def main():
             for chrom in editing:
                 for k, v in editing[chrom].iteritems():
                     out.write("%s\t%s\t%s\n"%(chrom, k.replace(':', '\t'), v))
+    
+def main():
+    import argparse
+    usage  = "%(prog)s [options]" 
+    parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
+                                      formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
+    parser.add_argument('--version', action='version', version='1.15b')
+    parser.add_argument("-i", "--fnames", nargs="+", help="files to preocess")
+    parser.add_argument("-s", "--snps", default="", help="dbSNP file")
+    parser.add_argument("-d", "--minDepth", default=5,  type=int,
+                        help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("-f", "--minAltfreq",  default=0.01, type=float,
+                        help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-n", "--minsamples", nargs="+", default=1, type=int, help="number of samples [%(default)s]")
+    
+    # print help if no parameters
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
+    o = parser.parse_args()
+    if o.verbose:
+        sys.stderr.write("Options: %s\n"%str(o))
+
+    snps = load_dbSNP(o.snps)
+
+    snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
+    print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
+    for n in o.minsamples:
+        get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, n, snptypes)
     
 if __name__=="__main__":
     main()
