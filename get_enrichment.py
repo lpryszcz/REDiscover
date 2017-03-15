@@ -34,7 +34,7 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
             if altcov < minDepth or chrom in snps and int(pos) in snps[chrom]:
                 continue
             snp = template%(ref, alt, strand)
-        # REDiscover.diff2 output
+        # REDiscover.diff2 output # get
         elif len(ldata)>4:
             chrom, pos, snp = ldata[:3]
             sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
@@ -104,7 +104,7 @@ def main():
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("-f", "--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
-    parser.add_argument("-n", "--minsamples", nargs="+", default=1, type=int, help="number of samples [%(default)s]")
+    parser.add_argument("-n", "--minsamples", nargs="+", default=[1], type=int, help="number of samples [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:

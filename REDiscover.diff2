@@ -16,6 +16,7 @@ import os, sys, pysam, resource
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
+
 from REDiscover import base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 
 import matplotlib.pyplot as plt
@@ -88,16 +89,18 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
                     continue
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
-                if freqs.max() >= minAltfreq:
+                if np.nanmax(freqs) >= minAltfreq: 
                     info.append(posinfo%(ref, pos, refbase, alphabet[bi], strand) + 
                                 "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
-    return "".join(info)
+    return info #"".join(info)
     
 def init_args(*args):
     global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
     fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose = args
     
 def worker(position):
+    # ignore all warnings
+    np.seterr(all='ignore')        
     global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
     return diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose)
     
@@ -114,9 +117,12 @@ def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
     
-def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=1000000,
+def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=100000,
                                 window_size=100, min_strandness=0.99):
-    """Return chromosome regions covered by at least mincov. """
+    """Return chromosome regions covered by at least mincov.
+
+    - step: consecutive regions covered by mincov are further split into smaller fragments
+    in order to minimalise memory usage [100,000]"""
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
@@ -168,7 +174,7 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
     out.write(header)
 
-    logger("Indexing bam file(s)...")
+    logger(" Indexing bam file(s)...")
     for fn in rna:
         if not os.path.isfile(fn+".bai"):
             cmd = "samtools index %s"%fn
@@ -176,7 +182,7 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
                 sys.stderr.write(" %s\n"%cmd)
             os.system(cmd)
 
-    logger("Genotyping...")
+    logger(" Genotyping...")
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
@@ -186,13 +192,14 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
         for region in regions:
             parser = diff_editing(region, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
             for data in parser:
-                out.write(data)
+                out.write("".join(data))
     else:
         initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
-        p = Pool(threads, initializer=init_args, initargs=initargs)
-        parser = p.imap(worker, regions)#, chunksize=100)
+        p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=3) # may be too low
+        # imap_unordered would be more optimal, but it'd result in unsorted output
+        parser = p.imap(worker, regions)#, chunksize=100) 
         for data in parser:
-            out.write(data)
+            out.write("".join(data))
 
     out.write("#Finished!\n")
     out.close()
@@ -296,10 +303,10 @@ def main():
         logger("Calculating differential editing...")
         get_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
                                  o.threads, o.verbose)
+    logger("Done!")
     return
     logger("Processing...")
     plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
-    logger("Done!")
         
 if __name__=='__main__': 
     t0 = datetime.now()
