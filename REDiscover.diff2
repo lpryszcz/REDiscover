@@ -134,7 +134,7 @@ def get_covered_regions_per_bam(bams, mincov=3, threads=4, maxdist=16000, step=1
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        if ref!="25": continue
+        #if ref!="25": continue
         coverage = np.zeros(length, dtype='uint32')
         for _coverage in p.imap_unordered(worker_coverage, [(bam, ref) for bam in bams]):
             coverage = np.max([coverage, _coverage], axis=0)
@@ -178,7 +178,7 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        regions = get_covered_regions_per_bam(rna, minDepth, threads) #stranded, )
+        regions = get_covered_regions_per_bam(rna, minDepth, threads) 
         
     if threads<2: # this is useful for debugging
         for region in regions:
@@ -189,7 +189,7 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
         initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
         p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=3) # may be too low
         # imap_unordered would be more optimal, but it'd result in unsorted output
-        parser = p.imap(worker, regions)#, chunksize=100) 
+        parser = p.imap(worker, regions)#, chunksize=100)
         for i, data in enumerate(parser, 1):
             sys.stderr.write(" %s    \r"%i)
             out.write("".join(data))
