@@ -116,38 +116,28 @@ def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
-    
-def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=100000,
-                                window_size=100, min_strandness=0.99):
-    """Return chromosome regions covered by at least mincov.
 
-    - step: consecutive regions covered by mincov are further split into smaller fragments
-    in order to minimalise memory usage [100,000]"""
+def worker_coverage(args):
+    """return coverage"""
+    bam, ref = args
+    sam = pysam.Samfile(bam)
+    ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}
+    coverage = np.zeros(ref2len[ref], dtype='uint32')
+    for a in sam.fetch(reference=ref):
+        for s, e in a.blocks:
+            coverage[s:e] += 1
+    return coverage
+
+def get_covered_regions_per_bam(bams, mincov=3, threads=4, maxdist=16000, step=100000):
+    """Return chromosome regions covered by at least mincov."""
+    p = Pool(threads)
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        #if ref!="25": continue
-        coverage = np.zeros((2, length), dtype='uint32') 
-        strands = np.zeros(((length/window_size)+1, 2), dtype='float32')
-        for i, bam in enumerate(bams):
-            sam = pysam.Samfile(bam)
-            for a in sam.fetch(reference=ref):
-                if is_qcfail(a, mapq):
-                    continue
-                # store strand info
-                strands[a.pos/window_size, is_antisense(a)] += 1
-                # add alg blocks
-                for s, e in a.blocks:
-                    coverage[1, s:e] += 1
-            # get strand enrichment
-            sums = strands.sum(axis=1)
-            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()
-            if stranded and frac<min_strandness:
-                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from chromosome %s\n"%(frac, bam, ref))
-            # get max coverage from all bams for each position
-            coverage[0] = coverage.max(axis=0)
-            coverage[1] *= 0
-        coverage = coverage[0]
+        if ref!="25": continue
+        coverage = np.zeros(length, dtype='uint32')
+        for _coverage in p.imap_unordered(worker_coverage, [(bam, ref) for bam in bams]):
+            coverage = np.max([coverage, _coverage], axis=0)
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
@@ -159,7 +149,7 @@ def get_covered_regions_per_bam(bams, mincov=3, mapq=10, stranded=0, maxdist=160
                 yield ref, s, s+step
                 s += step
             yield ref, s, e
-
+    
 def load_bed(fname):
     """Return regions from BED file"""
     for l in open(fname):
@@ -188,7 +178,7 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        regions = get_covered_regions_per_bam(rna, minDepth, stranded)
+        regions = get_covered_regions_per_bam(rna, minDepth, threads) #stranded, )
         
     if threads<2: # this is useful for debugging
         for region in regions:
@@ -206,55 +196,6 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
 
     out.write("#Finished!\n")
     out.close()
-
-def fn2tissue(fn): return os.path.basename(fn).split('.')[1]
-def fn2donor(fn): return os.path.basename(fn).split('.')[0]
-def fn2replica(fn): return '.'.join(os.path.basename(fn).split('.')[:2])
-    
-def plot_PCA(tmpfn, outbase, bams, minDepth, minAltfreq, verbose, n=3, frac=0.33):
-    """Plot PCA"""
-    # load array
-    d = np.loadtxt(tmpfn, usecols=range(3,3+len(bams)*2))
-    # reshape bam x snps x (cov, freq)
-    d2 = d.reshape(len(bams), d.shape[0], 2)
-    selected_samples = np.sum(d2[:,:,0]>=minDepth, axis=1)>=frac*d2.shape[1]
-    d2 = d2[selected_samples]
-    selected_snps = np.sum(d2[:,:,0]>=minDepth, axis=0)>=frac*d2.shape[0]
-    X = d2[:, selected_snps, 1]>=minAltfreq
-    
-    classes = []
-    tissues = {}
-    fn2class = []
-    for i, fn in enumerate(bams):
-        # skip if not in selected
-        if not selected_samples[i]:
-            sys.stderr.write(" %s skipped.\n"%fn)
-            continue
-        tissue = fn2tissue(fn) # fn2donor(fn) # fn2replica(fn) #
-        if tissue not in tissues:
-            tissues[tissue] = len(tissues)
-        classes.append(tissues[tissue])
-    y = np.array(classes)#, dtype=float)
-    print d2.shape, X.shape, len(y), len(tissues), tissues
-        
-    # http://scikit-learn.org/stable/auto_examples/decomposition/plot_pca_iris.html    
-    fig = plt.figure(1, figsize=(4, 3))
-    ax = plt.subplot(111) # Axes3D(fig, rect=[0, 0, .95, 1], elev=48, azim=134) #
-
-    plt.cla()
-    pca = decomposition.PCA(n_components=n)
-    pca.fit(X)
-    X = pca.transform(X)
-    print X.shape, pca.explained_variance_ratio_
-    
-    colors = plt.cm.Paired(np.linspace(0, 1, len(tissues)))
-    markers = 'xopsv<^>*h'
-    for tissue, label in tissues.iteritems():
-        ax.scatter(X[y==label, 0], X[y==label, 1], #X[y==label, 2],
-                   label=tissue, color=colors[label], marker=markers[label%len(markers)])
-
-    ax.legend(loc='upper left', numpoints=1, ncol=3, fontsize=8)#, bbox_to_anchor=(0, 0))
-    plt.show()
 
 def main():
     import argparse
@@ -307,9 +248,6 @@ def main():
         get_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
                                  o.threads, o.verbose)
     logger("Done!")
-    return
-    logger("Processing...")
-    plot_PCA(tmpfn, o.outbase, o.rna, o.minDepth, o.minAltfreq, o.verbose)
         
 if __name__=='__main__': 
     t0 = datetime.now()
