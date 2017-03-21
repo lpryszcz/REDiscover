@@ -12,12 +12,8 @@ from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
 
-from REDiscover import base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
+from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from sklearn import decomposition
-        
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     """Return 2D array of basecalls from BAM file, as follows
     - 1D positions from start to end
@@ -87,7 +83,7 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
                 if np.nanmax(freqs) >= minAltfreq: 
                     info.append(posinfo%(ref, pos, refbase, alphabet[bi], strand) + 
                                 "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
-    return info #"".join(info)
+    return "".join(info)
     
 def init_args(*args):
     global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
@@ -99,39 +95,35 @@ def worker(position):
     global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
     return diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose)
     
-def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
-    """Report nicely formatted stream to stderr"""
-    memory = timestamp = ""
-    if add_timestamp:
-        timestamp = "[%s] "%datetime.ctime(datetime.now())
-    if add_memory:
-        memory = " [memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
-    out.write("%s%s%s\n"%(timestamp, info, memory))
-
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
 
 def worker_coverage(args):
     """return coverage"""
-    bam, ref = args
+    bam, ref, mapq = args
     sam = pysam.Samfile(bam)
     ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}
-    coverage = np.zeros(ref2len[ref], dtype='uint32')
+    coverage = np.zeros(ref2len[ref], dtype='uint16')
     for a in sam.fetch(reference=ref):
+        if is_qcfail(a, mapq): continue
         for s, e in a.blocks:
             coverage[s:e] += 1
     return coverage
 
-def get_covered_regions_per_bam(bams, mincov=3, threads=4, maxdist=16000, step=100000):
+def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[],
+                                maxdist=16000, step=100000):
     """Return chromosome regions covered by at least mincov."""
     p = Pool(threads)
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        #if ref!="25": continue
-        coverage = np.zeros(length, dtype='uint32')
-        for _coverage in p.imap_unordered(worker_coverage, [(bam, ref) for bam in bams]):
+        if chrs and ref not in chrs:
+            if verbose:
+                sys.stderr.write(" skipped %s\n"%ref)
+            continue
+        coverage = np.zeros(length, dtype='uint16')
+        for _coverage in p.imap_unordered(worker_coverage, [(bam, ref, mapq) for bam in bams]):
             coverage = np.max([coverage, _coverage], axis=0)
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
@@ -154,9 +146,10 @@ def load_bed(fname):
         start, end = map(int, (start, end))
         yield ref, start, end
             
-def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, threads, verbose):
+def get_differential_editing(outfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq,
+                             threads, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
-    out = open(tmpfn, "w")
+    out = open(outfn, "w")
     runinfo = " ".join(sys.argv)
     header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
     out.write(header)
@@ -173,21 +166,20 @@ def get_differential_editing(tmpfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        regions = get_covered_regions_per_bam(rna, minDepth, threads) 
+        regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs) 
         
     if threads<2: # this is useful for debugging
         for region in regions:
             parser = diff_editing(region, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
             for data in parser:
-                out.write("".join(data))
+                out.write(data)
     else:
         initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
-        p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=3) # may be too low
-        # imap_unordered would be more optimal, but it'd result in unsorted output
-        parser = p.imap(worker, regions)#, chunksize=100)
+        p = Pool(threads, initializer=init_args, initargs=initargs)
+        parser = p.imap_unordered(worker, regions)
         for i, data in enumerate(parser, 1):
             sys.stderr.write(" %s    \r"%i)
-            out.write("".join(data))
+            out.write(data)
 
     out.write("#Finished!\n")
     out.close()
@@ -200,8 +192,9 @@ def main():
     
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.15b')
-    parser.add_argument("-o", "--outbase", required=1, help="output file")
+    parser.add_argument("-o", "--out", required=1, help="output file")
     parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
+    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
     refpar = parser.add_mutually_exclusive_group(required=True)
     refpar.add_argument("-d", "--dna", nargs="*", default = [],  help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
@@ -237,11 +230,13 @@ def main():
             sys.exit(1)
 
     # calculate differential editing if file doesn't exist
-    tmpfn = o.outbase+".diff.tsv"
-    if not os.path.isfile(tmpfn) or not open(tmpfn).readline():
-        logger("Calculating differential editing...")
-        get_differential_editing(tmpfn, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
-                                 o.threads, o.verbose)
+    if os.path.isfile(o.out) and open(o.out).readline():
+        sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
+        sys.exit(1)
+        
+    logger("Calculating differential editing...")
+    get_differential_editing(o.out, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
+                             o.threads, o.verbose, o.chrs)
     logger("Done!")
         
 if __name__=='__main__': 
