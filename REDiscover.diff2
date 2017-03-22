@@ -7,7 +7,7 @@ l.p.pryszcz@gmail.com
 Warsaw/Bratislava/Fribourg, 21/07/2015
 """
 
-import os, sys, pysam, resource
+import os, sys, pysam, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
@@ -49,7 +49,9 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
         strands = "+-" # dUTP, NSR, NNSR
     else:
         strands = "-+" # Illumina or Standard Solid
+    # 
     info = []
+    z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     posinfo = "%s\t%s\t%s>%s%s"
     ref, start, end = position
     refparser = fasta2calls(fasta, ref, start, end)    
@@ -81,8 +83,12 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if np.nanmax(freqs) >= minAltfreq: 
-                    info.append(posinfo%(ref, pos, refbase, alphabet[bi], strand) + 
-                                "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
+                    #text = posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n"
+                    text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")                    
+                    if text:
+                         info.append(text)
+    info.append(z.flush())
+    logger(" %s-%s:%s"%position)                     
     return "".join(info)
     
 def init_args(*args):
@@ -152,9 +158,12 @@ def get_differential_editing(outfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     out = open(outfn, "w")
     runinfo = " ".join(sys.argv)
     header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
+    # http://stackoverflow.com/a/22311297/632242
+    z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    header = z.compress(header) + z.flush()
     out.write(header)
 
-    logger(" Indexing bam file(s)...")
+    logger("Indexing bam file(s)...")
     for fn in rna:
         if not os.path.isfile(fn+".bai"):
             cmd = "samtools index %s"%fn
@@ -162,26 +171,26 @@ def get_differential_editing(outfn, regionsfn, fasta, rna, minDepth, minAltfreq,
                 sys.stderr.write(" %s\n"%cmd)
             os.system(cmd)
 
-    logger(" Genotyping...")
+    logger("Genotyping...")
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
-        
+
+    i = 0
     if threads<2: # this is useful for debugging
-        for region in regions:
+        for i, region in enumerate(regions, 1):
             parser = diff_editing(region, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
             for data in parser:
                 out.write(data)
     else:
         initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
-        p = Pool(threads, initializer=init_args, initargs=initargs)
-        parser = p.imap_unordered(worker, regions)
+        p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=20)
+        parser = p.imap_unordered(worker, regions, chunksize=10)
         for i, data in enumerate(parser, 1):
-            sys.stderr.write(" %s    \r"%i)
             out.write(data)
-
-    out.write("#Finished!\n")
+            
+    logger("%s regions processed"%i)
     out.close()
 
 def main():
@@ -230,14 +239,13 @@ def main():
             sys.exit(1)
 
     # calculate differential editing if file doesn't exist
+    if not o.out.endswith('.gz'): o.out += ".gz"
     if os.path.isfile(o.out) and open(o.out).readline():
         sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
         sys.exit(1)
         
-    logger("Calculating differential editing...")
     get_differential_editing(o.out, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
                              o.threads, o.verbose, o.chrs)
-    logger("Done!")
         
 if __name__=='__main__': 
     t0 = datetime.now()

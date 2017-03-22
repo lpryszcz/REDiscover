@@ -267,7 +267,9 @@ def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
     if add_timestamp:
         timestamp = "[%s] "%datetime.ctime(datetime.now())
     if add_memory:
-        memory = " [memory: %6i Mb]"%(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, )
+        selfmem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.
+        childrenmem = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.
+        memory = " [memory: %7.1f Mb]"%(childrenmem + selfmem, ) #; %7.1f Mb self
     out.write("%s%s%s\n"%(timestamp, info, memory))
 
 def main():
