@@ -7,7 +7,7 @@ l.p.pryszcz@gmail.com
 Warsaw/Bratislava/Fribourg, 21/07/2015
 """
 
-import os, sys
+import os, sys, gzip
 import numpy as np
 from remove_dbSNP import load_dbSNP
 
@@ -62,8 +62,12 @@ def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out
     # process all files
     editing = {}
     for fn in fnames:
+        if fn.endswith('.gz'):
+            handle = gzip.open(fn)            
+        else:
+            handle = open(fn)
         try:
-            editing, snp2c = txt2changes(editing, open(fn), snps, minDepth, minAltfreq, minsamples)
+            editing, snp2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minsamples)
         except Exception, e:
             sys.stderr.write("[ERROR] Couldn't parse %s with error: %s\n"%(fn, str(e)))
             continue
