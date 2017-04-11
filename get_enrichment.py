@@ -133,7 +133,8 @@ def main():
             if chrom not in snps:
                 snps[chrom] = _snps[chrom]
             else:
-                snps[chrom].union(_snps[chrom])
+                snps[chrom] = snps[chrom].union(_snps[chrom])
+    print "%s SNPs loaded in total."%sum(map(len, snps.itervalues()))
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)

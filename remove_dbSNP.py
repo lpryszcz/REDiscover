@@ -9,7 +9,7 @@ def load_dbSNP(vcf, add_chr=1):
     # load pickle
     if os.path.isfile(vcf+".pickle"):
         snps=pickle.load(open(vcf+".pickle"))
-        print "Loaded %s snps"%sum(map(len, snps.values()))
+        print "Loaded %s SNPs from %s"%(sum(map(len, snps.values())), vcf)
         return snps
     
     snps = {}
