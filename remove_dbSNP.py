@@ -20,8 +20,7 @@ def load_dbSNP(vcf, add_chr=1):
             continue
         j += 1
         chrom, pos, rs, ref, alt = l[:-1].split('\t')[:5]
-        if len(ref)!=len(alt):
-            continue
+        #if len(ref)!=len(alt): continue
         # 1 -> chr1
         if add_chr and not chrom.startswith('chr'): 
             chrom = "chr%s"%chrom

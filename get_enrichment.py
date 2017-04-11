@@ -18,6 +18,7 @@ base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
 def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
+    out = gzip.open(handle.name+".n%s.gz"%minSamples, "w")
     snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
     for l in handle:
         ldata = l.replace('\t\t','\t')[:-1].split('\t')
@@ -37,6 +38,11 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
         # REDiscover.diff2 output # get
         elif len(ldata)>4:
             chrom, pos, snp = ldata[:3]
+            if not chrom.startswith('chr'):
+                chrom = "chr%s"%chrom
+            # skip if present in dbSNP
+            if chrom in snps and int(pos) in snps[chrom]:
+                continue
             sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
             passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq))# & (sampledata[:, 1]<1.0))
             #print passed, ldata[3:]
@@ -56,6 +62,8 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
             editing[chrom][k] = 1
         else:
             editing[chrom][k] += 1
+        out.write(l)
+    out.close()
     return editing, snp2c
 
 def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out=sys.stdout):
@@ -103,7 +111,7 @@ def main():
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.15b')
     parser.add_argument("-i", "--fnames", nargs="+", help="files to preocess")
-    parser.add_argument("-s", "--snps", default="", help="dbSNP file")
+    parser.add_argument("-s", "--snps", default=[], nargs="+", help="dbSNP file")
     parser.add_argument("-d", "--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("-f", "--minAltfreq",  default=0.01, type=float,
@@ -118,8 +126,15 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
 
-    snps = load_dbSNP(o.snps)
-
+    snps = {}
+    for snpfn in o.snps:
+        _snps = load_dbSNP(snpfn)
+        for chrom in _snps:
+            if chrom not in snps:
+                snps[chrom] = _snps[chrom]
+            else:
+                snps[chrom].union(_snps[chrom])
+        
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
     for n in o.minsamples:
