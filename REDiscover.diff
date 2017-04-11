@@ -12,7 +12,7 @@ from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
 
-from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
+from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate, get_combined_calls
 
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     """Return 2D array of basecalls from BAM file, as follows
@@ -40,31 +40,35 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
             calls[s:e] += block
     return calls.reshape((end-start+1, 2, len(alphabet)))
 
-def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose):
+def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose):
     """Return RNA editing positions"""
     # define strands
     if not stranded:
         strands = "."  # unstranded
     elif stranded=="firststrand":
-        strands = "+-" # dUTP, NSR, NNSR
+        strands = "-+" # dUTP, NSR, NNSR
     else:
-        strands = "-+" # Illumina or Standard Solid
+        strands = "+-" # Illumina or Standard Solid
     # 
     info = []
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     posinfo = "%s\t%s\t%s>%s%s"
     ref, start, end = position
-    refparser = fasta2calls(fasta, ref, start, end)    
+    if dna:
+        refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded=0)
+    else:
+        refparser = fasta2calls(fasta, ref, start, end)
     parsers = [bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams]
     for pos, calls in enumerate(zip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])
-        #print ref, pos, len(calls), refcall, bamcalls
         # low dna coverage ie. N
         refcov = sum(refcall)
         if refcov < minDepth:
             continue
         refi = np.argmax(refcall)
-        #reffreq = 1.*alphabet[refi]/refcov
+        reffreq = 1.*refcall[refi]/refcov
+        if reffreq < .99:
+            continue
         refbase = alphabet[refi]
         # collapse both strands for unstranded data, without changing dimensions
         if not stranded:
@@ -83,7 +87,6 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if np.nanmax(freqs) >= minAltfreq: 
-                    #text = posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n"
                     text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")                    
                     if text:
                          info.append(text)
@@ -92,14 +95,14 @@ def diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, ba
     return "".join(info)
     
 def init_args(*args):
-    global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
-    fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose = args
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose
+    fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose = args
     
 def worker(position):
     # ignore all warnings
     np.seterr(all='ignore')        
-    global fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose
-    return diff_editing(position, fasta, bams, minDepth, minAltfreq, stranded, mapq, baseq, verbose)
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose
+    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose)
     
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
@@ -152,12 +155,12 @@ def load_bed(fname):
         start, end = map(int, (start, end))
         yield ref, start, end
             
-def get_differential_editing(outfn, regionsfn, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq,
-                             threads, verbose, chrs):
+def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
+                             stranded, mapq, bcq, threads, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
     runinfo = " ".join(sys.argv)
-    header = "## %s\n#chr\tpos\tref\talt\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
+    header = "## %s\n#chr\tpos\tvariation\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
     # http://stackoverflow.com/a/22311297/632242
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     header = z.compress(header) + z.flush()
@@ -175,18 +178,20 @@ def get_differential_editing(outfn, regionsfn, fasta, rna, minDepth, minAltfreq,
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
+        #regions = [("1", 10000, 20000), ("1", 20000, 30000),("1", 30000, 40000),]
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
 
     i = 0
     if threads<2: # this is useful for debugging
         for i, region in enumerate(regions, 1):
-            parser = diff_editing(region, fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
+            parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
+                                  stranded, mapq, bcq, verbose)
             for data in parser:
                 out.write(data)
     else:
-        initargs = (fasta, rna, minDepth, minAltfreq, stranded, mapq, bcq, verbose)
+        initargs = (fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, verbose)
         p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=20)
-        parser = p.imap_unordered(worker, regions, chunksize=10)
+        parser = p.imap(worker, regions) #_unordered , chunksize=10
         for i, data in enumerate(parser, 1):
             out.write(data)
             
@@ -205,7 +210,7 @@ def main():
     parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
     parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
     refpar = parser.add_mutually_exclusive_group(required=True)
-    refpar.add_argument("-d", "--dna", nargs="*", default = [],  help="input DNA-Seq BAM file(s)")
+    refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
     parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
     parser.add_argument("-s", "--stranded", "-fr-secondstrand", default=False, action="store_true", 
@@ -214,6 +219,8 @@ def main():
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
     parser.add_argument("--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("--minDNAfreq",  default=0.99, type=float,
+                        help="min frequency for DNA base [%(default)s]")
     parser.add_argument("--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
@@ -233,7 +240,7 @@ def main():
         o.stranded = "firststrand"
     
     # check if all input files exists
-    for fn in o.rna:
+    for fn in o.dna+o.rna:
         if not os.path.isfile(fn):
             sys.stderr.write("No such file: %s\n"%fn)
             sys.exit(1)
@@ -244,8 +251,8 @@ def main():
         sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
         sys.exit(1)
         
-    get_differential_editing(o.out, o.regions, o.fasta, o.rna, o.minDepth, o.minAltfreq, o.stranded, o.mapq, o.bcq,
-                             o.threads, o.verbose, o.chrs)
+    get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
+                             o.stranded, o.mapq, o.bcq, o.threads, o.verbose, o.chrs)
         
 if __name__=='__main__': 
     t0 = datetime.now()

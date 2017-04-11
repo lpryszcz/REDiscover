@@ -23,6 +23,7 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
     for l in handle:
         ldata = l.replace('\t\t','\t')[:-1].split('\t')
         if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
+            out.write(l)
             continue
         # REDiscover output
         if ldata[2] in '+-.': #len(ldata)>4
