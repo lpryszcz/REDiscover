@@ -39,6 +39,9 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
         # REDiscover.diff2 output # get
         elif len(ldata)>4:
             chrom, pos, snp = ldata[:3]
+            # unstranded
+            if snp[-1] == ".":
+                snp = snp.replace(".", "+")
             if not chrom.startswith('chr'):
                 chrom = "chr%s"%chrom
             # skip if present in dbSNP

@@ -12,7 +12,7 @@ from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
 
-from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate, get_combined_calls
+from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     """Return 2D array of basecalls from BAM file, as follows
@@ -23,13 +23,14 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     # ACGT x2 for each strand
     basesize = 2*len(alphabet)
     n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64") #(end-start+1, 2, basesize)
+    calls = np.zeros(n, dtype="int64") 
     # stop if ref not in sam file
     if ref not in sam.references:
         return calls.reshape((end-start+1, 2, len(alphabet)))
     pa = None  
     for a in sam.fetch(ref, start, end):
-        if is_qcfail(a, mapq) or is_duplicate(a, pa): continue
+        if is_qcfail(a, mapq) or is_duplicate(a, pa):
+            continue
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
@@ -40,6 +41,15 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
             calls[s:e] += block
     return calls.reshape((end-start+1, 2, len(alphabet)))
 
+def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
+    """Combine basecalls from several files"""
+    parsers = (bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams)
+    for call in np.sum(parsers, axis=0):
+        if stranded:
+            yield (call[0], call[1])
+        else:
+            yield call[0] + call[1]
+    
 def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose):
     """Return RNA editing positions"""
     # define strands
@@ -67,7 +77,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
             continue
         refi = np.argmax(refcall)
         reffreq = 1.*refcall[refi]/refcov
-        if reffreq < .99:
+        if reffreq < minDNAfreq:
             continue
         refbase = alphabet[refi]
         # collapse both strands for unstranded data, without changing dimensions
@@ -87,7 +97,8 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if np.nanmax(freqs) >= minAltfreq: 
-                    text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")                    
+                    #print ref, pos, refbase, alphabet[bi], strand, "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)); print refcall, bamcalls
+                    text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
                     if text:
                          info.append(text)
     info.append(z.flush())
@@ -178,7 +189,7 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        #regions = [("1", 10000, 20000), ("1", 20000, 30000),("1", 30000, 40000),]
+        #regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
 
     i = 0

@@ -30,14 +30,15 @@ def is_duplicate(a, pa):
     
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.flag&3840: # a.is_duplicate or a.is_secondary or a.is_qcfail or a.is_supplementary:
+    if a.mapq<mapq or a.flag&3840: 
         return True
         
 def _match(refi, readi, bases): return refi+bases, readi+bases, True
 def _insertion(refi, readi, bases): return refi, readi+bases, []
 def _deletion(refi, readi, bases): return refi+bases, readi, []
+def _skip(refi, readi, bases): return refi, readi, []
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                 2: _deletion, 3: _deletion, 4: _insertion, 5: _insertion}
+                 2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
 
 def get_blocks(a, start, end, baseq, i, basesize):
     """Return tuple of aligned position of query and reference"""
@@ -64,7 +65,6 @@ def get_blocks(a, start, end, baseq, i, basesize):
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand"""
-    #if a.is_read1 and a.is_reverse or a.is_read2 and not a.is_reverse or not a.is_paired and a.is_reverse:
     if a.is_reverse:
         if a.is_read1 or not a.is_paired:
             return 1
@@ -87,7 +87,8 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
         return calls.reshape((end-start+1, basesize))
     pa = None  
     for a in sam.fetch(ref, start, end):
-        if is_qcfail(a, mapq) or is_duplicate(a, pa): continue
+        if is_qcfail(a, mapq) or is_duplicate(a, pa):
+            continue
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
@@ -124,9 +125,9 @@ def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
     if not stranded:
         strands = "."  # unstranded
     elif stranded=="firststrand":
-        strands = "+-" # dUTP, NSR, NNSR
+        strands = "-+" # dUTP, NSR, NNSR
     else:
-        strands = "-+" # Illumina or Standard Solid
+        strands = "+-" # Illumina or Standard Solid
     # get parsers    
     rnaparser = get_combined_calls(rna, ref, start, end, mapq, baseq, stranded)
     if dna:
