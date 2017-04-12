@@ -16,7 +16,7 @@ strands = "+-"
 bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
-def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
+def txt2changes0(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     out = gzip.open(handle.name+".n%s.gz"%minSamples, "w")
     snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
@@ -55,6 +55,91 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
         else:
             chrom, pos, snp = ldata[:3]
 
+        if snp not in snp2c:
+            continue
+        snp2c[snp] += 1
+        # store editing
+        k = "%s:%s"%(pos, snp)
+        if chrom not in editing:
+            editing[chrom] = {k: 1}
+        elif k not in editing[chrom]:
+            editing[chrom][k] = 1
+        else:
+            editing[chrom][k] += 1
+        out.write(l)
+    out.close()
+    return editing, snp2c
+
+
+def parser_diff(handle, out, minDepth, minFreq, minSamples):
+    """SNP generator"""
+    ppos = 0
+    snps = []
+    for l in handle:    
+        ldata = l.replace('\t\t','\t')[:-1].split('\t')
+        if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
+            out.write(l)
+            continue
+        chrom, pos, snp = ldata[:3]
+        if ppos!=pos:
+            if snps:
+                yield snps
+            ppos = pos
+            snps = []    
+        # unstranded
+        if snp[-1] == ".":
+            snp = snp.replace(".", "+")
+        if not chrom.startswith('chr'):
+            chrom = "chr%s"%chrom
+        # skip if present in dbSNP
+        if chrom in snps and int(pos) in snps[chrom]:
+            continue
+        sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
+        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq))# & (sampledata[:, 1]<1.0))
+        if passed<minSamples:
+            continue
+        # store
+        snps.append((l, chrom, pos, snp))
+    if snps:
+        yield snps
+
+def _is_antisense(snps):
+    """Return true if snps truly antisense"""
+    change1, strand1 = snps[0][-1][:-1], snps[0][-1][-1]
+    change2, strand2 = snps[1][-1][:-1], snps[1][-1][-1]
+    if change1==change2 and strand1!=strand2:
+        #print "antisense"
+        return True
+
+def get_counts(l):
+    """Return snp counts in all samples"""
+    c = 0.0
+    ldata = l.split('\t')
+    for i in range(3, len(ldata), 2):
+        cov, freq = int(ldata[i]), float(ldata[i+1])
+        if cov:
+            c += cov * freq
+    return c
+        
+def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
+    """Return dictionary of snps and their occurencies"""
+    out = gzip.open(handle.name+".n%s.gz"%minSamples, "w")
+    snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
+    for snps in parser_diff(handle, out, minDepth, minFreq, minSamples):
+        #print snps
+        # skip mulit-SNP
+        if len(snps)>2:
+            continue
+        # try to rescue correct strand
+        elif len(snps)==2:
+            # skip if not antisense snps meaning only A>G+ and A>G- allowed, but not A>G+ and A>C-
+            if not _is_antisense(snps):
+                continue
+            counts = [get_counts(l) for l, chrom, pos, snp in snps]
+            maxi = np.argmax(counts)#; print counts, maxi
+            l, chrom, pos, snp = snps[maxi]
+        else:
+            l, chrom, pos, snp = snps[0]   
         if snp not in snp2c:
             continue
         snp2c[snp] += 1
