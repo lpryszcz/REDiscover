@@ -188,8 +188,8 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
-        #regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
+        #regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
+        regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
 
     i = 0
     if threads<2: # this is useful for debugging
