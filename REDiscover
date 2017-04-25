@@ -64,7 +64,8 @@ def get_blocks(a, start, end, baseq, i, basesize):
         yield prefi, block
 
 def is_antisense(a):
-    """Return 1 if read pair is from antisense strand"""
+    """Return 1 if read pair is from antisense strand,
+    meaning first-in-pair aligned to reverse strand"""
     if a.is_reverse:
         if a.is_read1 or not a.is_paired:
             return 1

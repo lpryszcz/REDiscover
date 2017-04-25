@@ -40,30 +40,41 @@ def load_exons(fname, verbose=0):
 def bam2strandness(bam, regions, mapq, verbose):
     """Calculate strandness"""
     strandness = [0, 0]
-    sam = pysam.AlignmentFile(bam)
-    for ref, start, end, strand in regions:    
-        # stop if ref not in sam file
-        if ref not in sam.references:
-            return
+    outfn = bam+".strand"
+    if not os.path.isfile(outfn):
+        sam = pysam.AlignmentFile(bam)
+        for ref, start, end, strand in regions:    
+            # stop if ref not in sam file
+            if ref not in sam.references:
+                return
 
-        for a in sam.fetch(ref, start, end):
-            if is_qcfail(a, mapq): 
-                continue
-            # get transcript strand
-            if is_antisense(a):
-                if strand == "-":
+            for a in sam.fetch(ref, start, end):
+                if is_qcfail(a, mapq): 
+                    continue
+                # get transcript strand
+                if is_antisense(a):
+                    if strand == "-":
+                        i = 0
+                    else:
+                        i = 1
+                # sense and +
+                elif strand=="+":
                     i = 0
+                # sense and -
                 else:
                     i = 1
-            # sense and +
-            elif strand=="+":
-                i = 0
-            # sense and -
-            else:
-                i = 1
-            strandness[i] += 1
-
-    return strandness
+                strandness[i] += 1
+        # save
+        with open(outfn, "w") as out:
+            out.write("%s\t%s\n"%tuple(strandness))
+    else:
+        strandness = map(int, open(outfn).readline().split('\t')[:2])
+        
+    freq = 0.
+    if sum(strandness):
+        freq = 1.*strandness[0] / sum(strandness)
+            
+    return sum(strandness), freq
 
 def init_args(*args):
     global regions, mapq, verbose 
@@ -93,15 +104,15 @@ def process_bams(bams, gtf, mapq, subset, threads, verbose=0):
         sys.stderr.write("Parsing bam file(s)...\n")
     if threads<2: # this is useful for debugging
         for bam in bams:
-            strandness = bam2strandness(bam, regions, mapq, verbose)
-            yield bam, sum(strandness), 1.*strandness[0] / sum(strandness)
+            reads, freq = bam2strandness(bam, regions, mapq, verbose)
+            yield bam, reads, freq
     else:
         initargs = (regions, mapq, verbose)
         p = Pool(threads, initializer=init_args, initargs=initargs)
-        parser = p.imap_unordered(worker, bams)
-        for i, strandness in enumerate(parser, 0):
+        parser = p.imap(worker, bams)
+        for i, (reads, freq) in enumerate(parser):
             bam = bams[i]
-            yield bam, sum(strandness), 1.*strandness[0] / sum(strandness)
+            yield bam, reads, freq
     
 def main():
     import argparse

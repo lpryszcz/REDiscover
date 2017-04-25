@@ -211,6 +211,8 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
 def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66):
     """Compute strandness"""
     strands = []
+    skipUnstranded = False
+    toSkip = set()
     for bam, reads, strandness in bam2strandness.process_bams(rna, gtf, mapq, subset, threads, verbose):
         strand = ""
         if strandness>=limit:
@@ -220,19 +222,26 @@ def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66
         strands.append(strand)
         if strand and .05<strandness<0.95:
             sys.stderr.write(" [WARNING] %s poorly stranded: %.3f\n"%(bam, strandness))
+        if not reads:
+            sys.stderr.write(" [WARNING] %s without alignments!\n"%(bam, ))
+            toSkip.add(bam)
             
     # notify about mixed strandness
     strandtypes = set(strands)
     if len(strandtypes)>1 and "" in strandtypes:
         sys.stderr.write("[WARNING] Mixing stranded and unstranded BAM files is not allowed: %s!\n"%str(strandtypes))
+        skipUnstranded = True
+        
+    if skipUnstranded or toSkip:
         _rna, _strands = [], []
         for fn, strand in zip(rna, strands):
-            if not strand:
+            if skipUnstranded and not strand or fn in toSkip:
                 sys.stderr.write(" %s skipped!\n"%fn)
                 continue
             _rna.append(fn)
             _strands.append(strand)
         rna, strands = _rna, _strands
+        
     return strands, rna
 
 def main():
@@ -274,6 +283,12 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
      
+    # calculate differential editing if file doesn't exist
+    if not o.out.endswith('.gz'): o.out += ".gz"
+    if os.path.isfile(o.out) and open(o.out).readline():
+        sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
+        sys.exit(1)
+        
     # check if all input files exists
     for fn in o.dna+o.rna:
         if not os.path.isfile(fn):
@@ -299,12 +314,6 @@ def main():
     else:
         o.stranded = [""]*len(o.bam)
                     
-    # calculate differential editing if file doesn't exist
-    if not o.out.endswith('.gz'): o.out += ".gz"
-    if os.path.isfile(o.out) and open(o.out).readline():
-        sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
-        sys.exit(1)
-        
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
                              o.stranded, o.mapq, o.bcq, o.threads, o.verbose, o.chrs)
         
