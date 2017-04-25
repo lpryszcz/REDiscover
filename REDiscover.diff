@@ -13,8 +13,9 @@ from multiprocessing import Pool
 import numpy as np
 
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
+import bam2strandness
 
-def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33):
     """Return 2D array of basecalls from BAM file, as follows
     - 1D positions from start to end
     - 2D base counts for ACGT from sense and antisense strand at given position
@@ -23,7 +24,7 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
     # ACGT x2 for each strand
     basesize = 2*len(alphabet)
     n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64") 
+    calls = np.zeros(n, dtype="int64")
     # stop if ref not in sam file
     if ref not in sam.references:
         return calls.reshape((end-start+1, 2, len(alphabet)))
@@ -34,7 +35,11 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
-        if is_antisense(a):
+        if stranded=="firststrand":
+            if not is_antisense(a):
+                i = len(alphabet)
+        # unstranded or secondstrand
+        elif is_antisense(a):
             i = len(alphabet)
         for refi, block in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
@@ -43,7 +48,7 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
 
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
     """Combine basecalls from several files"""
-    parsers = (bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams)
+    parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams)
     for call in np.sum(parsers, axis=0):
         if stranded:
             yield (call[0], call[1])
@@ -53,10 +58,10 @@ def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
 def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose):
     """Return RNA editing positions"""
     # define strands
-    if not stranded:
+    if not stranded[0]:
         strands = "."  # unstranded
-    elif stranded=="firststrand":
-        strands = "-+" # dUTP, NSR, NNSR
+    #elif stranded=="firststrand":
+    #    strands = "-+" # dUTP, NSR, NNSR
     else:
         strands = "+-" # Illumina or Standard Solid
     # 
@@ -68,7 +73,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
         refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded=0)
     else:
         refparser = fasta2calls(fasta, ref, start, end)
-    parsers = [bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams]
+    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
     for pos, calls in enumerate(zip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])
         # low dna coverage ie. N
@@ -81,7 +86,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
             continue
         refbase = alphabet[refi]
         # collapse both strands for unstranded data, without changing dimensions
-        if not stranded:
+        if not stranded[0]:
             bamcalls[:, 0] += bamcalls[:, 1]
         # process strands
         for si, strand in enumerate(strands):
@@ -170,27 +175,21 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
                              stranded, mapq, bcq, threads, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
-    runinfo = " ".join(sys.argv)
-    header = "## %s\n#chr\tpos\tvariation\t%s\n"%(runinfo, "\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna))
+    header = "## %s\n"%" ".join(sys.argv)
+    header += "## %s\n" % "\t".join(rna)
+    header += "## %s\n" % "\t".join(stranded)
+    header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna)
     # http://stackoverflow.com/a/22311297/632242
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     header = z.compress(header) + z.flush()
     out.write(header)
 
-    logger("Indexing bam file(s)...")
-    for fn in rna:
-        if not os.path.isfile(fn+".bai"):
-            cmd = "samtools index %s"%fn
-            if verbose:
-                sys.stderr.write(" %s\n"%cmd)
-            os.system(cmd)
-
     logger("Genotyping...")
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        #regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
-        regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
+        regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
+        #regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
 
     i = 0
     if threads<2: # this is useful for debugging
@@ -209,6 +208,33 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     logger("%s regions processed"%i)
     out.close()
 
+def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66):
+    """Compute strandness"""
+    strands = []
+    for bam, reads, strandness in bam2strandness.process_bams(rna, gtf, mapq, subset, threads, verbose):
+        strand = ""
+        if strandness>=limit:
+            strand = "secondstrand"
+        elif 1.-strandness>=limit:
+            strand = "firststrand"
+        strands.append(strand)
+        if strand and .05<strandness<0.95:
+            sys.stderr.write(" [WARNING] %s poorly stranded: %.3f\n"%(bam, strandness))
+            
+    # notify about mixed strandness
+    strandtypes = set(strands)
+    if len(strandtypes)>1 and "" in strandtypes:
+        sys.stderr.write("[WARNING] Mixing stranded and unstranded BAM files is not allowed: %s!\n"%str(strandtypes))
+        _rna, _strands = [], []
+        for fn, strand in zip(rna, strands):
+            if not strand:
+                sys.stderr.write(" %s skipped!\n"%fn)
+                continue
+            _rna.append(fn)
+            _strands.append(strand)
+        rna, strands = _rna, _strands
+    return strands, rna
+
 def main():
     import argparse
     usage  = "%(prog)s [options]" 
@@ -224,7 +250,9 @@ def main():
     refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
     parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
-    parser.add_argument("-s", "--stranded", "-fr-secondstrand", default=False, action="store_true", 
+    strand = parser.add_mutually_exclusive_group()
+    parser.add_argument("-g", "--gtf", default="", help="auto dectection of strandness [unstranded]")
+    parser.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
                         help="stranded RNAseq libraries ie. Illumina or Standard Solid")
     parser.add_argument("-fr-firststrand", default=False, action="store_true", 
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
@@ -246,16 +274,31 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
      
-    # mark stranded protocol
-    if o.fr_firststrand:
-        o.stranded = "firststrand"
-    
     # check if all input files exists
     for fn in o.dna+o.rna:
         if not os.path.isfile(fn):
             sys.stderr.write("No such file: %s\n"%fn)
             sys.exit(1)
 
+    logger("Indexing bam file(s)...")
+    for fn in o.dna+o.rna:
+        if not os.path.isfile(fn+".bai"):
+            cmd = "samtools index %s"%fn
+            if verbose:
+                sys.stderr.write(" %s\n"%cmd)
+            os.system(cmd)
+
+    # mark stranded protocol
+    if o.gtf:
+        logger("Detecting strandness in BAMs...")
+        o.stranded, o.rna = compute_strandness(o.rna, o.gtf, o.mapq, o.threads, o.verbose)
+    elif o.strand:
+        o.stranded = ["secondstrand"]*len(o.bam)
+    elif o.fr_firststrand:
+        o.stranded = ["firststrand"]*len(o.bam)
+    else:
+        o.stranded = [""]*len(o.bam)
+                    
     # calculate differential editing if file doesn't exist
     if not o.out.endswith('.gz'): o.out += ".gz"
     if os.path.isfile(o.out) and open(o.out).readline():
