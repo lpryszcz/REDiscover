@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 desc="""Calculate strandness for each bam
-
-It require tab-delimited BED-like file (chr, start, end, strand) exons
-that are non-overlapping with antisense genes. This can be generated easily with bedtools:
- bedtools intersect -v -S -a <(awk '$3=="exon"' gtf) -b <(awk '$3=="gene"' gtf) | bedtools merge -i - -s > exons.uniq.bed
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -46,8 +42,8 @@ def bam2strandness(bam, regions, mapq, verbose):
         for ref, start, end, strand in regions:    
             # stop if ref not in sam file
             if ref not in sam.references:
-                return
-
+                continue
+            # parse reads
             for a in sam.fetch(ref, start, end):
                 if is_qcfail(a, mapq): 
                     continue
@@ -82,7 +78,8 @@ def init_args(*args):
     
 def worker(bam):       
     global regions, mapq, verbose
-    return bam2strandness(bam, regions, mapq, verbose)
+    reads, freq = bam2strandness(bam, regions, mapq, verbose)
+    return reads, freq
 
 def process_bams(bams, gtf, mapq, subset, threads, verbose=0):
     """Process all bam files and yield number of reads and strandness"""
