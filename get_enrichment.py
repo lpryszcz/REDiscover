@@ -16,62 +16,7 @@ strands = "+-"
 bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
-def txt2changes0(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
-    """Return dictionary of snps and their occurencies"""
-    out = gzip.open(handle.name+".n%s.gz"%minSamples, "w")
-    snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
-    for l in handle:
-        ldata = l.replace('\t\t','\t')[:-1].split('\t')
-        if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
-            out.write(l)
-            continue
-        # REDiscover output
-        if ldata[2] in '+-.': #len(ldata)>4
-            chrom, pos, strand, ref, alt = ldata[:5]
-            if not chrom.startswith('chr'):
-                chrom = "chr%s"%chrom
-            altcov, altfreq = ldata[-2:]
-            altcov, altfreq = int(altcov), float(altfreq)
-            # skip if known snp or low cov
-            if altcov < minDepth or chrom in snps and int(pos) in snps[chrom]:
-                continue
-            snp = template%(ref, alt, strand)
-        # REDiscover.diff2 output # get
-        elif len(ldata)>4:
-            chrom, pos, snp = ldata[:3]
-            # unstranded
-            if snp[-1] == ".":
-                snp = snp.replace(".", "+")
-            if not chrom.startswith('chr'):
-                chrom = "chr%s"%chrom
-            # skip if present in dbSNP
-            if chrom in snps and int(pos) in snps[chrom]:
-                continue
-            sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
-            passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq))# & (sampledata[:, 1]<1.0))
-            #print passed, ldata[3:]
-            if passed<minSamples: continue
-        # common.txt
-        else:
-            chrom, pos, snp = ldata[:3]
-
-        if snp not in snp2c:
-            continue
-        snp2c[snp] += 1
-        # store editing
-        k = "%s:%s"%(pos, snp)
-        if chrom not in editing:
-            editing[chrom] = {k: 1}
-        elif k not in editing[chrom]:
-            editing[chrom][k] = 1
-        else:
-            editing[chrom][k] += 1
-        out.write(l)
-    out.close()
-    return editing, snp2c
-
-
-def parser_diff(handle, outs, minDepth, minFreq, minSamples):
+def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minSamples):
     """SNP generator"""
     ppos = 0
     snps = []
@@ -93,7 +38,7 @@ def parser_diff(handle, outs, minDepth, minFreq, minSamples):
         if not chrom.startswith('chr'):
             chrom = "chr%s"%chrom
         # skip if present in dbSNP
-        if chrom in snps and int(pos) in snps[chrom]:
+        if chrom in dbSNP and int(pos) in dbSNP[chrom]:
             continue
         sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
         passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq)) 
@@ -120,11 +65,11 @@ def get_counts(l):
             c += cov * freq
     return c
         
-def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=[3], template="%s>%s%s"):
+def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minSamples=[3], template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
-    for snps in parser_diff(handle, outs, minDepth, minFreq, minSamples):
+    for snps in parser_diff(handle, dbSNP, outs, minDepth, minFreq, minSamples):
         # skip mulit-SNP
         if len(snps)>2:
             continue
@@ -137,9 +82,12 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=[3]
             maxi = np.argmax(counts)#; print counts, maxi
             l, passed, chrom, pos, snp = snps[maxi]
         else:
-            l, passed, chrom, pos, snp = snps[0]   
+            l, passed, chrom, pos, snp = snps[0]
+            
+        # skip if unexpected editing type
         if snp not in snp2c[minSamples[0]]:
             continue
+        
         # store only if enough passed samples
         for n in filter(lambda x: x<=passed, snp2c.keys()): 
             snp2c[n][snp] += 1
