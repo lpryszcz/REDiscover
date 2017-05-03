@@ -71,14 +71,15 @@ def txt2changes0(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3,
     return editing, snp2c
 
 
-def parser_diff(handle, out, minDepth, minFreq, minSamples):
+def parser_diff(handle, outs, minDepth, minFreq, minSamples):
     """SNP generator"""
     ppos = 0
     snps = []
-    for l in handle:    
+    for l in handle: 
         ldata = l.replace('\t\t','\t')[:-1].split('\t')
         if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
-            out.write(l)
+            for out in outs.itervalues():
+                out.write(l)
             continue
         chrom, pos, snp = ldata[:3]
         if ppos!=pos:
@@ -95,11 +96,9 @@ def parser_diff(handle, out, minDepth, minFreq, minSamples):
         if chrom in snps and int(pos) in snps[chrom]:
             continue
         sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
-        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq))# & (sampledata[:, 1]<1.0))
-        if passed<minSamples:
-            continue
+        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq)) 
         # store
-        snps.append((l, chrom, pos, snp))
+        snps.append((l, passed, chrom, pos, snp))
     if snps:
         yield snps
 
@@ -121,12 +120,11 @@ def get_counts(l):
             c += cov * freq
     return c
         
-def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, template="%s>%s%s"):
+def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=[3], template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
-    out = gzip.open(handle.name+".n%s.gz"%minSamples, "w")
-    snp2c = {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b}
-    for snps in parser_diff(handle, out, minDepth, minFreq, minSamples):
-        #print snps
+    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
+    snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
+    for snps in parser_diff(handle, outs, minDepth, minFreq, minSamples):
         # skip mulit-SNP
         if len(snps)>2:
             continue
@@ -135,25 +133,21 @@ def txt2changes(editing, handle, snps, minDepth=20, minFreq=0.01, minSamples=3, 
             # skip if not antisense snps meaning only A>G+ and A>G- allowed, but not A>G+ and A>C-
             if not _is_antisense(snps):
                 continue
-            counts = [get_counts(l) for l, chrom, pos, snp in snps]
+            counts = [get_counts(l) for l, passed, chrom, pos, snp in snps]
             maxi = np.argmax(counts)#; print counts, maxi
-            l, chrom, pos, snp = snps[maxi]
+            l, passed, chrom, pos, snp = snps[maxi]
         else:
-            l, chrom, pos, snp = snps[0]   
-        if snp not in snp2c:
+            l, passed, chrom, pos, snp = snps[0]   
+        if snp not in snp2c[minSamples[0]]:
             continue
-        snp2c[snp] += 1
-        # store editing
-        k = "%s:%s"%(pos, snp)
-        if chrom not in editing:
-            editing[chrom] = {k: 1}
-        elif k not in editing[chrom]:
-            editing[chrom][k] = 1
-        else:
-            editing[chrom][k] += 1
-        out.write(l)
-    out.close()
-    return editing, snp2c
+        # store only if enough passed samples
+        for n in filter(lambda x: x<=passed, snp2c.keys()): 
+            snp2c[n][snp] += 1
+            outs[n].write(l)
+    # close outs
+    for out in outs.itervalues():
+        out.close()
+    return snp2c
 
 def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out=sys.stdout):
     # process all files
@@ -163,34 +157,27 @@ def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out
             handle = gzip.open(fn)            
         else:
             handle = open(fn)
-        try:
-            editing, snp2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minsamples)
-        except Exception, e:
-            sys.stderr.write("[ERROR] Couldn't parse %s with error: %s\n"%(fn, str(e)))
-            continue
-        total = sum(snp2c.itervalues())
-        if not total:
-            sys.stderr.write("[WARNING] No editing in %s\n"%(fn, ))
-            continue
-        # get freqs and strand enrichment
-        strands = []
-        freqs = []
-        for snp in sorted(filter(lambda x: x[-1]=="+", snp2c)):
-            snprc = "".join(base2rc[b] for b in snp)
-            freq = 1.*(snp2c[snp]+snp2c[snprc])/total
-            freqs.append(freq)
-            strands.append((snp2c[snp], snp2c[snp[:-1]+"-"]))
-        strands = np.array(strands, dtype="float32")
-        frac = sum(strands.max(axis=1))/strands.sum()
-        print "%s %s\t%s\t%s\t%s"%(fn, minsamples, total, frac, "\t".join(map(str, freqs)))
+        
+        minSamplesSNP2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minsamples)
 
-    # don't output common txt for single file
-    if len(fnames)>1:
-        with open("common.txt", "w") as out:
-            for chrom in editing:
-                for k, v in editing[chrom].iteritems():
-                    out.write("%s\t%s\t%s\n"%(chrom, k.replace(':', '\t'), v))
-    
+        for n in sorted(minsamples):
+            snp2c = minSamplesSNP2c[n]
+            total = sum(snp2c.itervalues())
+            if not total:
+                sys.stderr.write("[WARNING] No editing in %s\n"%(fn, ))
+                continue
+            # get freqs and strand enrichment
+            strands = []
+            freqs = []
+            for snp in sorted(filter(lambda x: x[-1]=="+", snp2c)):
+                snprc = "".join(base2rc[b] for b in snp)
+                freq = 1.*(snp2c[snp]+snp2c[snprc])/total
+                freqs.append(freq)
+                strands.append((snp2c[snp], snp2c[snp[:-1]+"-"]))
+            strands = np.array(strands, dtype="float32")
+            frac = sum(strands.max(axis=1))/strands.sum()
+            print "%s %s\t%s\t%s\t%s"%(fn, n, total, frac, "\t".join(map(str, freqs)))
+
 def main():
     import argparse
     usage  = "%(prog)s [options]" 
@@ -199,7 +186,7 @@ def main():
     
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.15b')
-    parser.add_argument("-i", "--fnames", nargs="+", help="files to preocess")
+    parser.add_argument("-i", "--fnames", nargs="+", help="files to process")
     parser.add_argument("-s", "--snps", default=[], nargs="+", help="dbSNP file")
     parser.add_argument("-d", "--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
@@ -227,8 +214,7 @@ def main():
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
-    for n in o.minsamples:
-        get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, n, snptypes)
+    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minsamples, snptypes)
     
 if __name__=="__main__":
     main()

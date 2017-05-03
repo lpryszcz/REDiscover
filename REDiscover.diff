@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-desc="""Identify differential RNA editing sites from multiple RNAseq experiments (.bam). 
+desc="""Identify differential RNA editing sites from multiple RNAseq experiments (.bam).
+
+TBA:
+- cap at some max coverage ie. 800X
+- skip reads with >25% bases soft-clipped
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
