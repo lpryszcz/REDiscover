@@ -27,10 +27,18 @@ def is_duplicate(a, pa):
     if pa and a.pos==pa.pos and a.flag==pa.flag and a.isize==pa.isize \
        and a.cigarstring==pa.cigarstring and a.seq==pa.seq:
         return True
-    
+
+def _heavily_clippped(a, maxfrac=0.1):
+    """Return True if fraction of read being soft-clipped is larger than maxfrac"""
+    # https://samtools.github.io/hts-specs/SAMv1.pdf
+    clipped_bases = sum(bases for code, bases in a.cigar if code==4)
+    clipped_frac = 1.*clipped_bases/a.rlen
+    if clipped_frac>maxfrac:
+        return True
+        
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.flag&3840: 
+    if a.mapq<mapq or a.flag&3840 or _heavily_clippped(a): 
         return True
         
 def _match(refi, readi, bases): return refi+bases, readi+bases, True

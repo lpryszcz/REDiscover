@@ -169,7 +169,7 @@ def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], ver
 def load_bed(fname):
     """Return regions from BED file"""
     for l in open(fname):
-        if l.startswith('#'):
+        if l.startswith('#') or not l[:-1]:
             continue
         ref, start, end = l[:-1].split('\t')[:3]
         start, end = map(int, (start, end))
