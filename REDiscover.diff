@@ -22,42 +22,14 @@ import numpy as np
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 import bam2strandness
 
-def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33):
-    """Return 2D array of basecalls from BAM file, as follows
-    - 1D positions from start to end
-    - 2D base counts for ACGT from sense and antisense strand at given position
-    """
-    sam = pysam.AlignmentFile(bam)
-    # ACGT x2 for each strand
-    basesize = 2*len(alphabet)
-    n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64")
-    # stop if ref not in sam file
-    if ref not in sam.references:
-        return calls.reshape((end-start+1, 2), len(alphabet))
-    pa = None  
-    for a in sam.fetch(ref, start, end):
-        if is_qcfail(a, mapq) or is_duplicate(a, pa):
-            continue
-        pa = a
-        # get transcript strand
-        i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
-        if stranded=="firststrand":
-            if not is_antisense(a):
-                i = len(alphabet)
-        # unstranded or secondstrand
-        elif is_antisense(a):
-            i = len(alphabet)
-        for refi, block, bases in get_blocks(a, start, end, baseq, i, basesize):
-            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
-            if block:
-                calls[s:e] += block
-    return calls.reshape((end-start+1, 2, len(alphabet)))
 
-def bam2calls1(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.2, window=10):
-    """Return 2D array of basecalls from BAM file, as follows
-    - 1D positions from start to end
-    - 2D base counts for ACGT from sense and antisense strand at given position
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.2, window=10):
+    """Return 3D array of basecalls from BAM file, as follows:
+    - 1D positions from start to end of the ref
+    - 2D sense and antisense strand
+    - 3D base counts for ACGT
+
+    
     """
     sam = pysam.AlignmentFile(bam)
     # ACGT x2 for each strand
@@ -129,7 +101,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
         refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded=0)
     else:
         refparser = fasta2calls(fasta, ref, start, end)
-    parsers = [bam2calls1(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
+    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
     for pos, calls in enumerate(zip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])
         # low dna coverage ie. N
@@ -150,6 +122,8 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
             coverage = bamcalls[:, si].sum(axis=1)
             if coverage.max() < minDepth:
                 continue
+            # ignore alleles with less than 3 reads
+            bamcalls[:, si][bamcalls[:,si]<3] = 0
             # process alt bases
             for bi, base in enumerate(alphabet):
                 # skip reference and if less than 3 reads per allele
@@ -157,7 +131,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                     continue
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
-                if np.nanmax(freqs) >= minAltfreq: 
+                if np.nanmax(freqs) >= minAltfreq:
                     text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
                     if text:
                          info.append(text)
