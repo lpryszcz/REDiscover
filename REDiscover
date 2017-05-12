@@ -24,11 +24,10 @@ for i, b in enumerate(alphabet.lower()):
 
 def is_duplicate(a, pa):
     """Return True if read is duplicate"""
-    if pa and a.pos==pa.pos and a.flag==pa.flag and a.isize==pa.isize \
-       and a.cigarstring==pa.cigarstring and a.seq==pa.seq:
+    if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
         return True
 
-def _heavily_clippped(a, maxfrac=0.1):
+def is_heavily_clippped(a, maxfrac=0.5):
     """Return True if fraction of read being soft-clipped is larger than maxfrac"""
     # https://samtools.github.io/hts-specs/SAMv1.pdf
     clipped_bases = sum(bases for code, bases in a.cigar if code==4)
@@ -38,24 +37,39 @@ def _heavily_clippped(a, maxfrac=0.1):
         
 def is_qcfail(a, mapq=15):
     """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.flag&3840 or _heavily_clippped(a): 
+    if a.mapq<mapq or a.flag&3840 or is_heavily_clippped(a): 
         return True
         
 def _match(refi, readi, bases): return refi+bases, readi+bases, True
 def _insertion(refi, readi, bases): return refi, readi+bases, []
+def _softclip(refi, readi, bases): return refi, readi+bases, True
 def _deletion(refi, readi, bases): return refi+bases, readi, []
 def _skip(refi, readi, bases): return refi, readi, []
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                 2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
+                 2: _deletion, 3: _deletion, 4: _softclip, 5: _skip}
 
 def get_blocks(a, start, end, baseq, i, basesize):
     """Return tuple of aligned position of query and reference"""
     readi, refi = 0, a.pos
-    for code, bases in a.cigar:
+    for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
         refi, readi, data = code2function[code](refi, readi, bases)
+        # skip if not alignment or 
         if not data or refi<start-1:
             continue
+        # mark soft-clipped region
+        if code == 4:
+            # beginning is soft-clipped
+            if not ci: prefi-=bases
+            _refi = prefi + bases
+            if prefi<start:
+                bases -= start-prefi
+                prefi = start
+            if _refi>end:
+                bases -= _refi-end
+            yield prefi, [], bases
+            continue
+        # typical alignment part
         if prefi<start:
             bases -= start-prefi
             preadi += start-prefi
@@ -69,7 +83,7 @@ def get_blocks(a, start, end, baseq, i, basesize):
             if q<baseq or b not in base2index:
                 continue
             block[ii*basesize+base2index[b]+i] += 1
-        yield prefi, block
+        yield prefi, block, 0
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand,

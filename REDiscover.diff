@@ -4,6 +4,9 @@ desc="""Identify differential RNA editing sites from multiple RNAseq experiments
 TBA:
 - cap at some max coverage ie. 800X
 - skip reads with >25% bases soft-clipped
+ - skip regions when there are so many reads soft-clipped
+- maybe instead of processing individual reads, I could preload all reads from the region
+and parse through them yielding one base at a time?
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -31,7 +34,7 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33):
     calls = np.zeros(n, dtype="int64")
     # stop if ref not in sam file
     if ref not in sam.references:
-        return calls.reshape((end-start+1, 2, len(alphabet)))
+        return calls.reshape((end-start+1, 2), len(alphabet))
     pa = None  
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa):
@@ -45,14 +48,65 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33):
         # unstranded or secondstrand
         elif is_antisense(a):
             i = len(alphabet)
-        for refi, block in get_blocks(a, start, end, baseq, i, basesize):
+        for refi, block, bases in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
-            calls[s:e] += block
+            if block:
+                calls[s:e] += block
     return calls.reshape((end-start+1, 2, len(alphabet)))
 
+def bam2calls1(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.2, window=10):
+    """Return 2D array of basecalls from BAM file, as follows
+    - 1D positions from start to end
+    - 2D base counts for ACGT from sense and antisense strand at given position
+    """
+    sam = pysam.AlignmentFile(bam)
+    # ACGT x2 for each strand
+    basesize = 2*len(alphabet)
+    n =  basesize * (end-start+1)
+    calls = np.zeros(n, dtype="int64")
+    softclipped = np.zeros(end-start+1, dtype="uint16")
+    # stop if ref not in sam file
+    if ref not in sam.references:
+        return calls.reshape((end-start+1, 2), len(alphabet))
+    pa = None  
+    for a in sam.fetch(ref, start, end):
+        if is_qcfail(a, mapq) or is_duplicate(a, pa):
+            continue
+        pa = a
+        # get transcript strand
+        i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
+        if stranded=="firststrand":
+            if not is_antisense(a):
+                i = len(alphabet)
+        # unstranded or secondstrand
+        elif is_antisense(a):
+            i = len(alphabet)
+        for refi, block, bases in get_blocks(a, start, end, baseq, i, basesize):
+            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
+            if block:
+                calls[s:e] += block
+            elif bases:
+                softclipped[s:s+bases] += 1
+                
+    # zero positions where there too many soft-clipped positions
+    # or huge coverage difference ie. indels, intron-exon boundary
+    calls = calls.reshape((end-start+1, 2, len(alphabet)))
+    #covsmoothed = np.mean(calls[s:e, strand].sum(axis=1) 
+    for pos, s in enumerate(softclipped):
+        #if s: print ref, pos+start, s, calls[pos]
+        if calls[pos].sum() * sfrac < s:
+            calls[pos] = 0
+        for strand in (0, 1):
+            s = pos-window if pos>window else 0
+            e = s+2*window # ignoring last bases this way
+            #print pos, s, e, calls[pos, strand].sum(), calls[s:e, strand].sum(axis=1)
+            if calls[pos][strand].sum() < calls[s:e, strand].sum(axis=1).mean()*sfrac:
+                calls[pos][strand] = 0
+    return calls
+
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
-    """Combine basecalls from several files"""
-    parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams)
+    """Combine basecalls from several files""" 
+    parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams) 
     for call in np.sum(parsers, axis=0):
         if stranded:
             yield (call[0], call[1])
@@ -63,11 +117,9 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
     """Return RNA editing positions"""
     # define strands
     if not stranded[0]:
-        strands = "."  # unstranded
-    #elif stranded=="firststrand":
-    #    strands = "-+" # dUTP, NSR, NNSR
+        strands = "."  
     else:
-        strands = "+-" # Illumina or Standard Solid
+        strands = "+-" 
     # 
     info = []
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
@@ -77,7 +129,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
         refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded=0)
     else:
         refparser = fasta2calls(fasta, ref, start, end)
-    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
+    parsers = [bam2calls1(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
     for pos, calls in enumerate(zip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])
         # low dna coverage ie. N
@@ -106,7 +158,6 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if np.nanmax(freqs) >= minAltfreq: 
-                    #print ref, pos, refbase, alphabet[bi], strand, "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)); print refcall, bamcalls
                     text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
                     if text:
                          info.append(text)
@@ -140,8 +191,7 @@ def worker_coverage(args):
             coverage[s:e] += 1
     return coverage
 
-def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], verbose=0, 
-                                maxdist=16000, step=100000):
+def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], verbose=0,  maxdist=16000, step=100000):
     """Return chromosome regions covered by at least mincov."""
     p = Pool(threads)
     sam = pysam.Samfile(bams[0])
@@ -171,7 +221,12 @@ def load_bed(fname):
     for l in open(fname):
         if l.startswith('#') or not l[:-1]:
             continue
-        ref, start, end = l[:-1].split('\t')[:3]
+        ldata = l[:-1].replace(',','').split('\t')
+        if len(ldata) == 3:
+            ref, start, end = ldata
+        else:
+            ref, se = ldata[0].split(':')
+            start, end = se.split('-')
         start, end = map(int, (start, end))
         yield ref, start, end
             
@@ -192,7 +247,6 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     if regionsfn:
         regions = load_bed(regionsfn)
     else:
-        #regions = [("1", 0, 200000),]# ("1", 20000, 30000),("1", 30000, 40000),]
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
 
     i = 0
@@ -261,8 +315,8 @@ def main():
     parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
     refpar = parser.add_mutually_exclusive_group(required=True)
     refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
-    refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
-    parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
+    refpar.add_argument("-f", "--fasta", default='', help="reference FASTA file")
+    parser.add_argument("-r", "--rna", nargs="+", help="input RNA-Seq BAM file(s)")
     strand = parser.add_mutually_exclusive_group()
     parser.add_argument("-g", "--gtf", default="", help="auto dectection of strandness [unstranded]")
     parser.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
@@ -294,8 +348,8 @@ def main():
         sys.exit(1)
         
     # check if all input files exists
-    for fn in o.dna+o.rna:
-        if not os.path.isfile(fn):
+    for fn in o.dna+o.rna+[o.fasta]:
+        if fn and not os.path.isfile(fn):
             sys.stderr.write("No such file: %s\n"%fn)
             sys.exit(1)
 
@@ -311,12 +365,12 @@ def main():
     if o.gtf:
         logger("Detecting strandness in BAMs...")
         o.stranded, o.rna = compute_strandness(o.rna, o.gtf, o.mapq, o.threads, o.verbose)
-    elif o.strand:
-        o.stranded = ["secondstrand"]*len(o.bam)
+    elif o.stranded:
+        o.stranded = ["secondstrand"]*len(o.rna)
     elif o.fr_firststrand:
-        o.stranded = ["firststrand"]*len(o.bam)
+        o.stranded = ["firststrand"]*len(o.rna)
     else:
-        o.stranded = [""]*len(o.bam)
+        o.stranded = [""]*len(o.rna)
                     
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
                              o.stranded, o.mapq, o.bcq, o.threads, o.verbose, o.chrs)
