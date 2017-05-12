@@ -27,7 +27,7 @@ def is_duplicate(a, pa):
     if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
         return True
 
-def is_heavily_clippped(a, maxfrac=0.5):
+def is_heavily_clippped(a, maxfrac=0.1):
     """Return True if fraction of read being soft-clipped is larger than maxfrac"""
     # https://samtools.github.io/hts-specs/SAMv1.pdf
     clipped_bases = sum(bases for code, bases in a.cigar if code==4)

@@ -192,15 +192,21 @@ def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], ver
     
 def load_bed(fname):
     """Return regions from BED file"""
-    for l in open(fname):
-        if l.startswith('#') or not l[:-1]:
-            continue
-        ldata = l[:-1].replace(',','').split('\t')
-        if len(ldata) == 3:
-            ref, start, end = ldata
-        else:
-            ref, se = ldata[0].split(':')
-            start, end = se.split('-')
+    if os.path.isfile(fname):
+        for l in open(fname):
+            if l.startswith('#') or not l[:-1]:
+                continue
+            ldata = l[:-1].replace(',','').split('\t')
+            if len(ldata) == 3:
+                ref, start, end = ldata
+            else:
+                ref, se = ldata[0].split(':')
+                start, end = se.split('-')
+            start, end = map(int, (start, end))
+            yield ref, start, end
+    else:
+        ref, se = fname.replace(',','').split('\t').split(':')
+        start, end = se.split('-')
         start, end = map(int, (start, end))
         yield ref, start, end
             
@@ -303,8 +309,8 @@ def main():
                         help="min frequency for DNA base [%(default)s]")
     parser.add_argument("--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
-    parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
-    parser.add_argument("--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
     parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
     
     # print help if no parameters
