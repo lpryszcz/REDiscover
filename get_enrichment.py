@@ -16,7 +16,7 @@ strands = "+-"
 bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
-def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minSamples):
+def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples):
     """SNP generator"""
     ppos = 0
     snps = []
@@ -41,7 +41,9 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minSamples):
         if chrom in dbSNP and int(pos) in dbSNP[chrom]:
             continue
         sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
-        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq)) 
+        # enough depth, frequency and more than 3 reads in alt allele    
+        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq) \
+                     & (sampledata[:, 0]*sampledata[:, 1]>=minAltReads))
         # store
         snps.append((l, passed, chrom, pos, snp))
     if snps:
@@ -65,11 +67,11 @@ def get_counts(l):
             c += cov * freq
     return c
         
-def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minSamples=[3], template="%s>%s%s"):
+def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
-    for snps in parser_diff(handle, dbSNP, outs, minDepth, minFreq, minSamples):
+    for snps in parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples):
         # skip mulit-SNP
         if len(snps)>2:
             continue
@@ -97,7 +99,7 @@ def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minSamples=[3
         out.close()
     return snp2c
 
-def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out=sys.stdout):
+def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, snptypes, out=sys.stdout):
     # process all files
     editing = {}
     for fn in fnames:
@@ -106,7 +108,7 @@ def get_enrichment(fnames, snps, minDepth, minAltfreq, minsamples, snptypes, out
         else:
             handle = open(fn)
         
-        minSamplesSNP2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minsamples)
+        minSamplesSNP2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples)
 
         for n in sorted(minsamples):
             snp2c = minSamplesSNP2c[n]
@@ -140,6 +142,8 @@ def main():
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("-f", "--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-a", "--minAltReads",  default=3, type=int,
+                        help="min number of reads with alternative base [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1], type=int, help="number of samples [%(default)s]")
     
     # print help if no parameters
@@ -162,7 +166,7 @@ def main():
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
-    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minsamples, snptypes)
+    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minAltReads, o.minsamples, snptypes)
     
 if __name__=="__main__":
     main()

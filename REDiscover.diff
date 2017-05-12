@@ -123,7 +123,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
             if coverage.max() < minDepth:
                 continue
             # ignore alleles with less than 3 reads
-            bamcalls[:, si][bamcalls[:,si]<3] = 0
+            #bamcalls[:, si][bamcalls[:,si]<3] = 0
             # process alt bases
             for bi, base in enumerate(alphabet):
                 # skip reference and if less than 3 reads per allele
