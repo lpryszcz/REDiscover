@@ -7,6 +7,8 @@ TBA:
  - skip regions when there are so many reads soft-clipped
 - maybe instead of processing individual reads, I could preload all reads from the region
 and parse through them yielding one base at a time?
+- skip alt alleles coming from one strand only
+ - tricky to implement, as in the case of SE stranded, there won't be antisense reads at all
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -22,24 +24,22 @@ import numpy as np
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 import bam2strandness
 
-
 def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.2, window=10):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
     - 3D base counts for ACGT
-
-    
     """
     sam = pysam.AlignmentFile(bam)
     # ACGT x2 for each strand
-    basesize = 2*len(alphabet)
+    strandsNo = 4
+    basesize = strandsNo*len(alphabet)
     n =  basesize * (end-start+1)
     calls = np.zeros(n, dtype="int64")
     softclipped = np.zeros(end-start+1, dtype="uint16")
     # stop if ref not in sam file
     if ref not in sam.references:
-        return calls.reshape((end-start+1, 2), len(alphabet))
+        return calls.reshape((end-start+1, strandsNo), len(alphabet))
     pa = None  
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa):
@@ -62,8 +62,7 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfra
                 
     # zero positions where there too many soft-clipped positions
     # or huge coverage difference ie. indels, intron-exon boundary
-    calls = calls.reshape((end-start+1, 2, len(alphabet)))
-    #covsmoothed = np.mean(calls[s:e, strand].sum(axis=1) 
+    calls = calls.reshape((end-start+1, strandsNo, len(alphabet)))
     for pos, s in enumerate(softclipped):
         #if s: print ref, pos+start, s, calls[pos]
         if calls[pos].sum() * sfrac < s:
@@ -71,7 +70,6 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfra
         for strand in (0, 1):
             s = pos-window if pos>window else 0
             e = s+2*window # ignoring last bases this way
-            #print pos, s, e, calls[pos, strand].sum(), calls[s:e, strand].sum(axis=1)
             if calls[pos][strand].sum() < calls[s:e, strand].sum(axis=1).mean()*sfrac:
                 calls[pos][strand] = 0
     return calls
@@ -85,13 +83,13 @@ def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
         else:
             yield call[0] + call[1]
     
-def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose):
+def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose):
     """Return RNA editing positions"""
     # define strands
     if not stranded[0]:
         strands = "."  
     else:
-        strands = "+-" 
+        strands = "+-"
     # 
     info = []
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
@@ -116,6 +114,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
         # collapse both strands for unstranded data, without changing dimensions
         if not stranded[0]:
             bamcalls[:, 0] += bamcalls[:, 1]
+            bamcalls[:, 2] += bamcalls[:, 3]
         # process strands
         for si, strand in enumerate(strands):
             # skip if low coverage in all samples
@@ -124,6 +123,10 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                 continue
             # ignore alleles with less than 3 reads
             #bamcalls[:, si][bamcalls[:,si]<3] = 0
+            # ignore alleles with huge strand enrichment if paired-end or not stranded 
+            if maxStrandBias: 
+                strandBias = 1.*bamcalls[:, si+2]/bamcalls[:, si]
+                bamcalls[:, si][np.any((strandBias>1-maxStrandBias, strandBias<maxStrandBias), axis=0)] = 0
             # process alt bases
             for bi, base in enumerate(alphabet):
                 # skip reference and if less than 3 reads per allele
@@ -136,18 +139,18 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                     if text:
                          info.append(text)
     info.append(z.flush())
-    logger(" %s-%s:%s"%position)                     
+    logger(" %s:%s-%s"%position)                     
     return "".join(info)
     
 def init_args(*args):
-    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose
-    fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose = args
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose
+    fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose = args
     
 def worker(position):
     # ignore all warnings
     np.seterr(all='ignore')        
-    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose
-    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, verbose)
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose
+    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose)
     
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
@@ -205,13 +208,13 @@ def load_bed(fname):
             start, end = map(int, (start, end))
             yield ref, start, end
     else:
-        ref, se = fname.replace(',','').split('\t').split(':')
+        ref, se = fname.replace(',','').split('\t')[0].split(':')
         start, end = se.split('-')
         start, end = map(int, (start, end))
         yield ref, start, end
             
 def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
-                             stranded, mapq, bcq, threads, verbose, chrs):
+                             stranded, mapq, bcq, threads, maxStrandBias, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
     header = "## %s\n"%" ".join(sys.argv)
@@ -233,11 +236,11 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     if threads<2: # this is useful for debugging
         for i, region in enumerate(regions, 1):
             parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
-                                  stranded, mapq, bcq, verbose)
+                                  stranded, mapq, bcq, maxStrandBias, verbose)
             for data in parser:
                 out.write(data)
     else:
-        initargs = (fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, verbose)
+        initargs = (fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, maxStrandBias, verbose)
         p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=20)
         parser = p.imap(worker, regions) #_unordered , chunksize=10
         for i, data in enumerate(parser, 1):
@@ -311,6 +314,7 @@ def main():
                         help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
     parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-m", "--maxStrandBias", default=0.1, type=float, help="max allowed strand bias [%(default)s]")
     parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
     
     # print help if no parameters
@@ -353,7 +357,7 @@ def main():
         o.stranded = [""]*len(o.rna)
                     
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
-                             o.stranded, o.mapq, o.bcq, o.threads, o.verbose, o.chrs)
+                             o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.verbose, o.chrs)
         
 if __name__=='__main__': 
     t0 = datetime.now()

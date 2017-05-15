@@ -83,6 +83,8 @@ def get_blocks(a, start, end, baseq, i, basesize):
             if q<baseq or b not in base2index:
                 continue
             block[ii*basesize+base2index[b]+i] += 1
+            # add fwd strand signals
+            if not a.is_reverse: block[ii*basesize+base2index[b]+2*len(alphabet)+i] += 1            
         yield prefi, block, 0
 
 def is_antisense(a):
