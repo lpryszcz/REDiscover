@@ -27,7 +27,7 @@ def is_duplicate(a, pa):
     if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
         return True
 
-def is_heavily_clippped(a, maxfrac=0.1):
+def is_heavily_clippped(a, maxfrac=0.05):
     """Return True if fraction of read being soft-clipped is larger than maxfrac"""
     # https://samtools.github.io/hts-specs/SAMv1.pdf
     clipped_bases = sum(bases for code, bases in a.cigar if code==4)
@@ -54,20 +54,25 @@ def get_blocks(a, start, end, baseq, i, basesize):
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
         refi, readi, data = code2function[code](refi, readi, bases)
-        # skip if not alignment or 
-        if not data or refi<start-1:
-            continue
-        # mark soft-clipped region
-        if code == 4:
-            # beginning is soft-clipped
-            if not ci: prefi-=bases
+        # mark soft-clipped & indels regions
+        if code in (1, 2, 4):
+            if code in (1, 2) and bases<25:
+                bases = 25
+            ## mark on both sides
+            prefi-=bases
+            bases = 2*bases
+            if code==2:
+                bases += bases
             _refi = prefi + bases
             if prefi<start:
                 bases -= start-prefi
                 prefi = start
             if _refi>end:
                 bases -= _refi-end
-            yield prefi, [], bases
+            yield prefi, code, bases
+            continue
+        # skip if not alignment or 
+        if not data or refi<start-1:
             continue
         # typical alignment part
         if prefi<start:

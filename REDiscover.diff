@@ -9,6 +9,8 @@ TBA:
 and parse through them yielding one base at a time?
 - skip alt alleles coming from one strand only
  - tricky to implement, as in the case of SE stranded, there won't be antisense reads at all
+- skip regions around indels?
+
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -24,7 +26,7 @@ import numpy as np
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 import bam2strandness
 
-def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.2, window=10):
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.1, window=10):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
@@ -36,10 +38,17 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfra
     basesize = strandsNo*len(alphabet)
     n =  basesize * (end-start+1)
     calls = np.zeros(n, dtype="int64")
-    softclipped = np.zeros(end-start+1, dtype="uint16")
+    # softclipped (4) & indels (1,2)
+    noise = {4: np.zeros(end-start+1, dtype="uint16"), 1: np.zeros(end-start+1, dtype="uint16")}
+    noise[2] = noise[1]
     # stop if ref not in sam file
     if ref not in sam.references:
-        return calls.reshape((end-start+1, strandsNo), len(alphabet))
+        if ref.startswith('chr') and ref[3:] in sam.references:
+            ref = ref[3:]
+        elif 'chr%s'%ref in sam.references:
+            ref = 'chr%s'%ref
+        else:
+            return calls.reshape((end-start+1, strandsNo, len(alphabet)))
     pa = None  
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa):
@@ -54,24 +63,30 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfra
         elif is_antisense(a):
             i = len(alphabet)
         for refi, block, bases in get_blocks(a, start, end, baseq, i, basesize):
-            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
-            if block:
+            # softclip
+            if block in (1, 2, 4):
+                s = refi-start
+                noise[block][s:s+bases] += 1
+            elif block:
+                s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
                 calls[s:e] += block
-            elif bases:
-                softclipped[s:s+bases] += 1
                 
     # zero positions where there too many soft-clipped positions
     # or huge coverage difference ie. indels, intron-exon boundary
     calls = calls.reshape((end-start+1, strandsNo, len(alphabet)))
-    for pos, s in enumerate(softclipped):
-        #if s: print ref, pos+start, s, calls[pos]
-        if calls[pos].sum() * sfrac < s:
-            calls[pos] = 0
+    #print bam, noise[4]; print noise[1]#; print calls[:,:2].sum(axis=2)
+    for pos, (softclipped, indels) in enumerate(zip(noise[4], noise[1])):
         for strand in (0, 1):
             s = pos-window if pos>window else 0
             e = s+2*window # ignoring last bases this way
             if calls[pos][strand].sum() < calls[s:e, strand].sum(axis=1).mean()*sfrac:
                 calls[pos][strand] = 0
+        #if s: print ref, pos+start, s, calls[pos]
+        if calls[pos][:2].sum() * sfrac < softclipped:
+            calls[pos][:2] = 0
+        #if s: print ref, pos+start, s, calls[pos]
+        if calls[pos][:2].sum() * sfrac < indels:
+            calls[pos][:2] = 0
     return calls
 
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
