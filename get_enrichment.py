@@ -83,7 +83,7 @@ def clean_cluster(cluster, minFreq=0.67):
         cluster = filter(lambda x: x[-1]==snp, cluster)
     return cluster
     
-def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs, step=30):
+def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs, dist=30):
     """SNP cluster generator. Combines cluster"""
     cluster = []
     pchrom = ppos = 0
@@ -107,7 +107,7 @@ def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples
             continue
         # report cluster
         pos = int(pos)    
-        if pchrom!=chrom or pos>ppos+step:
+        if pchrom!=chrom or pos>ppos+dist:
             if cluster and clean_cluster(cluster):
                 yield clean_cluster(cluster)
             cluster = []
@@ -118,12 +118,13 @@ def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples
     if cluster and clean_cluster(cluster):
         yield clean_cluster(cluster)
     
-def txt2changes_clusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
+def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, \
+                minSamples=[3], dist=30, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
     validSNPs = set(snp2c[minSamples[0]].keys())
-    for cluster in get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs):
+    for cluster in get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs, dist):
         for l, passed, chrom, pos, snp in cluster:
             # store only if enough passed samples
             for n in filter(lambda x: x<=passed, snp2c.keys()): 
@@ -134,7 +135,8 @@ def txt2changes_clusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minA
         out.close()
     return snp2c
     
-def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
+def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3,
+                           minSamples=[3], template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
@@ -166,12 +168,8 @@ def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, mi
         out.close()
     return snp2c        
 
-def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, snptypes, noclusters=0, out=sys.stdout):
+def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, snptypes, dist=0, out=sys.stdout):
     """Filter RNA editing and compute enrichment"""
-    if noclusters:
-        txt2changes = txt2changes_noclusters
-    else:
-        txt2changes = txt2changes_clusters
     # process all files
     editing = {}
     for fn in fnames:
@@ -180,7 +178,7 @@ def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, 
         else:
             handle = open(fn)
         
-        minSamplesSNP2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples)
+        minSamplesSNP2c = txt2changes(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, dist)
 
         for n in sorted(minsamples):
             snp2c = minSamplesSNP2c[n]
@@ -217,7 +215,7 @@ def main():
     parser.add_argument("-a", "--minAltReads",  default=3, type=int,
                         help="min number of reads with alternative base [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1], type=int, help="number of samples [%(default)s]")
-    parser.add_argument("-c", "--noclusters", action="store_true", help="don't use clusters filtering")
+    parser.add_argument("--dist", default=30, type=int, help="distance between SNPs in cluster [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -239,7 +237,7 @@ def main():
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
-    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minAltReads, o.minsamples, snptypes, o.noclusters)
+    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minAltReads, o.minsamples, snptypes, o.dist)
     
 if __name__=="__main__":
     main()
