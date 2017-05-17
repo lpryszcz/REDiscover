@@ -10,7 +10,9 @@ and parse through them yielding one base at a time?
 - skip alt alleles coming from one strand only
  - tricky to implement, as in the case of SE stranded, there won't be antisense reads at all
 - skip regions around indels?
-
+- process ref bam in the same filtering run
+- add post-filtering:
+ - skip regions having ie. 2+ types of changes withing 10-20bp
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com

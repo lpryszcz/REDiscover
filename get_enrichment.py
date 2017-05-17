@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 desc="""Return enrichment of various types of editing
+
+TBD:
+- skip mixed regions or low freq SNPs in clusters ie <30bp apart
 """
 epilog="""Author:
 l.p.pryszcz@gmail.com
@@ -10,6 +13,7 @@ Warsaw/Bratislava/Fribourg, 21/07/2015
 import os, sys, gzip
 import numpy as np
 from remove_dbSNP import load_dbSNP
+from collections import Counter
 
 bases = "ACGT"
 strands = "+-"
@@ -66,8 +70,71 @@ def get_counts(l):
         if cov:
             c += cov * freq
     return c
-        
-def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
+
+def clean_cluster(cluster, minFreq=0.67):
+    # make sure if clean cluster - remove low freq SNPs
+    c = Counter(c[-1] for c in cluster)
+    if len(c)>1:
+        snp, snpi = c.most_common(1)[0]
+        if 1.*snpi/len(cluster) < minFreq:
+            #print "lowfreq cluster", c, "%s:%s"%cluster[0][2:4]#, cluster
+            return []
+        #print "filtering only %s"%snp, c, "%s:%s"%cluster[0][2:4]#cluster
+        cluster = filter(lambda x: x[-1]==snp, cluster)
+    return cluster
+    
+def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs, step=30):
+    """SNP cluster generator. Combines cluster"""
+    cluster = []
+    pchrom = ppos = 0
+    for snps in parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples):
+        # skip mulit-SNP
+        if len(snps)>2:
+            continue
+        # try to rescue correct strand
+        elif len(snps)==2:
+            # skip if not antisense snps meaning only A>G+ and A>G- allowed, but not A>G+ and A>C-
+            if not _is_antisense(snps):
+                continue
+            counts = [get_counts(l) for l, passed, chrom, pos, snp in snps]
+            maxi = np.argmax(counts)#; print counts, maxi
+            l, passed, chrom, pos, snp = snps[maxi]
+        else:
+            l, passed, chrom, pos, snp = snps[0]
+            
+        # skip if unexpected editing type
+        if snp not in validSNPs:
+            continue
+        # report cluster
+        pos = int(pos)    
+        if pchrom!=chrom or pos>ppos+step:
+            if cluster and clean_cluster(cluster):
+                yield clean_cluster(cluster)
+            cluster = []
+            pchrom, ppos = chrom, pos
+        # populate cluster
+        cluster.append((l, passed, chrom, pos, snp))
+
+    if cluster and clean_cluster(cluster):
+        yield clean_cluster(cluster)
+    
+def txt2changes_clusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
+    """Return dictionary of snps and their occurencies"""
+    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
+    snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
+    validSNPs = set(snp2c[minSamples[0]].keys())
+    for cluster in get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, validSNPs):
+        for l, passed, chrom, pos, snp in cluster:
+            # store only if enough passed samples
+            for n in filter(lambda x: x<=passed, snp2c.keys()): 
+                snp2c[n][snp] += 1
+                outs[n].write(l)
+    # close outs
+    for out in outs.itervalues():
+        out.close()
+    return snp2c
+    
+def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, minSamples=[3], template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
     outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
@@ -89,7 +156,7 @@ def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3
         # skip if unexpected editing type
         if snp not in snp2c[minSamples[0]]:
             continue
-        
+
         # store only if enough passed samples
         for n in filter(lambda x: x<=passed, snp2c.keys()): 
             snp2c[n][snp] += 1
@@ -97,9 +164,14 @@ def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3
     # close outs
     for out in outs.itervalues():
         out.close()
-    return snp2c
+    return snp2c        
 
-def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, snptypes, out=sys.stdout):
+def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, snptypes, noclusters=0, out=sys.stdout):
+    """Filter RNA editing and compute enrichment"""
+    if noclusters:
+        txt2changes = txt2changes_noclusters
+    else:
+        txt2changes = txt2changes_clusters
     # process all files
     editing = {}
     for fn in fnames:
@@ -145,6 +217,7 @@ def main():
     parser.add_argument("-a", "--minAltReads",  default=3, type=int,
                         help="min number of reads with alternative base [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1], type=int, help="number of samples [%(default)s]")
+    parser.add_argument("-c", "--noclusters", action="store_true", help="don't use clusters filtering")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -166,7 +239,7 @@ def main():
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
-    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minAltReads, o.minsamples, snptypes)
+    get_enrichment(o.fnames, snps, o.minDepth, o.minAltfreq, o.minAltReads, o.minsamples, snptypes, o.noclusters)
     
 if __name__=="__main__":
     main()
