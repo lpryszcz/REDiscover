@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 
 bases = "ACGT"
 strands = "+-"
-bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
 
 def load_snps(fname, snp2id, dbSNP={}, minDepth=5, minFreq=0.05, minAltReads=3, minSamples=1):
@@ -108,7 +107,7 @@ def main():
     for i, snp in enumerate(id2snp):
         outfn = "%s.%s.png"%(o.fname, snp[:-1].replace('>','_'))
         print i, snp, outfn
-        plot_hist(bins, names, outfn, snps[i], snp[:-1])
+        plot_hist(o.bins, names, outfn, snps[i], snp[:-1])
 
 if __name__=="__main__":
     main()

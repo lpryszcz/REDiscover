@@ -302,6 +302,13 @@ def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66
         
     return strands, rna
 
+def is_any_lib_single(bams):
+    """Return True if any lib is single-end"""
+    for bam in bams:
+        r = pysam.Samfile(bam).next()
+        if not r.is_paired:
+            return True
+    
 def main():
     import argparse
     usage  = "%(prog)s [options]" 
@@ -372,6 +379,11 @@ def main():
         o.stranded = ["firststrand"]*len(o.rna)
     else:
         o.stranded = [""]*len(o.rna)
+
+    # disable strandBias filter if stranded and single-end
+    if o.stranded[0] and is_any_lib_single(o.rna): 
+        logger("[WARNING] Stranded and single-end libraries present: disabled maxStrandBias!", 0)
+        o.maxStrandBias = 0
                     
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
                              o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.verbose, o.chrs)
