@@ -17,7 +17,7 @@ def load_exons(fname, verbose=0):
     """Return regions from gtf/gff file"""
     uniqexons = fname+".exons.uniq.bed"
     if not os.path.isfile(uniqexons):
-        cmd1 = """awk '$3=="exon"' %s > %s.exon.gtf"""%(fname, fname)
+        cmd1 = """awk '$3=="exon" || $3=="CDS"' %s > %s.exon.gtf"""%(fname, fname)
         cmd2 = """awk '$3=="gene"' %s > %s.gene.gtf"""%(fname, fname)
         cmd3 = "bedtools intersect -v -S -a %s.exon.gtf -b %s.gene.gtf | bedtools sort | bedtools merge -i - -s > %s"%(fname, fname, uniqexons)
         if verbose:

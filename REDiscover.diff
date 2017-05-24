@@ -24,6 +24,7 @@ import os, sys, pysam, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
+from FastaIndex import FastaIndex
 
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, is_antisense, is_qcfail, is_duplicate
 import bam2strandness
@@ -368,6 +369,10 @@ def main():
             if verbose:
                 sys.stderr.write(" %s\n"%cmd)
             os.system(cmd)
+
+    # load fasta
+    if o.fasta:
+        FastaIndex(o.fasta)
 
     # mark stranded protocol
     if o.gtf:
