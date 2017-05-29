@@ -377,7 +377,7 @@ def main():
         FastaIndex(o.fasta)
 
     # mark stranded protocol
-    if o.gtf:
+    if o.gtf and not o.unstranded:
         logger("Detecting strandness in BAMs...")
         o.stranded, o.rna = compute_strandness(o.rna, o.gtf, o.mapq, o.threads, o.verbose)
     elif o.stranded:
