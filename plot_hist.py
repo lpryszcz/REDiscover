@@ -28,8 +28,9 @@ def load_snps(fname, snp2id, eid=-2, dbSNP={}, minDepth=5, minFreq=0.05, minAltR
     for i, l in enumerate(gzip.open(fname)): 
         ldata = l[:-1].split('\t')
         if l.startswith('#') or len(ldata)<3:
-            if i==1:
-                names = [os.path.basename(fn).split('.')[eid] for fn in l[:-1].split()[1:]]; print len(names), names
+            if i==3:
+                #names = [os.path.basename(fn).split('.')[eid] for fn in l[:-1].split()[1:]]; print len(names), names
+                names = [os.path.basename(fn).split()[0].split('.')[eid] for fn in l[:-1].split('\t')[3::2]]; print len(names), names
                 snps = [[[] for n in names] for _i in range(12)]
             continue
         chrom, pos, snp = ldata[:3]

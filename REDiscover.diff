@@ -327,8 +327,10 @@ def main():
     parser.add_argument("-r", "--rna", nargs="+", help="input RNA-Seq BAM file(s)")
     strand = parser.add_mutually_exclusive_group()
     parser.add_argument("-g", "--gtf", default="", help="auto dectection of strandness [unstranded]")
+    parser.add_argument("-u", "--unstranded", action="store_true",
+                        help="unstranded RNAseq libraries [auto]")
     parser.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
-                        help="stranded RNAseq libraries ie. Illumina or Standard Solid")
+                        help="stranded RNAseq libraries ie. Illumina or Standard Solid [auto]")
     parser.add_argument("-fr-firststrand", default=False, action="store_true", 
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
     parser.add_argument("--minDepth", default=5,  type=int,
