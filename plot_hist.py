@@ -25,6 +25,7 @@ def load_snps(fname, snp2id, eid=-2, dbSNP={}, minDepth=5, minFreq=0.05, minAltR
     """
     # process snps
     snps, names = [], []
+    #name2id = {}
     for i, l in enumerate(gzip.open(fname)): 
         ldata = l[:-1].split('\t')
         if l.startswith('#') or len(ldata)<3:
@@ -32,6 +33,10 @@ def load_snps(fname, snp2id, eid=-2, dbSNP={}, minDepth=5, minFreq=0.05, minAltR
                 #names = [os.path.basename(fn).split('.')[eid] for fn in l[:-1].split()[1:]]; print len(names), names
                 names = [os.path.basename(fn).split()[0].split('.')[eid] for fn in l[:-1].split('\t')[3::2]]; print len(names), names
                 snps = [[[] for n in names] for _i in range(12)]
+                '''for n in names:
+                    if n not in name2id:
+                        name2id[n] = len(name2id)
+                snps = [[[] for n in name2id.keys()] for _i in range(12)]'''
             continue
         chrom, pos, snp = ldata[:3]
         # unstranded
@@ -51,24 +56,63 @@ def load_snps(fname, snp2id, eid=-2, dbSNP={}, minDepth=5, minFreq=0.05, minAltR
         # store
         if passed<minSamples:
             continue
+        #print sampledata.shape
         for ii, (cov, freq) in enumerate(sampledata):
-            if cov:
+            if cov: #name2id[names[ii]]
                 snps[snp2id[snp]][ii].append(freq)
     return snps, names
 
-def plot_hist(bins, names, outfn, snps, title): #, colors, log=0):
+def _sorter(x):
+    xlist = x.split('_')
+    name2id = {'solid':0, 'total': 1, 'bound': 2, 'unbound': 3}
+    data = [name2id[xlist[0]]]
+    if xlist[1].lower()=="egg": data.append(0)
+    elif xlist[1].startswith('128'): data.append(6)
+    elif xlist[1].startswith('16'): data.append(4)
+    elif xlist[1].startswith('1'): data.append(2)
+    elif xlist[1].startswith('3'): data.append(8)
+    elif xlist[1].startswith('5'): data.append(10)
+    else: data.append(xlist[1])
+    return data 
+    
+def plot_hist(bins, orgnames, outfn, snps, title, selected=[], startswith=''): #, colors, log=0):
     """Plot hist"""
-    x, y = 5, 4
-    fig, subplots = plt.subplots(x, y, sharey='all', sharex='all', figsize=(15, 15))
+    name2id = {}
+    # subset of samples
+    if selected or startswith:
+        names = filter(lambda x: x in selected or x.startswith(startswith), orgnames)
+    else:
+        names = orgnames
+    # get number of rows/columns
+    ncol = nrow = int(np.sqrt(len(names)))
+    if ncol*nrow < len(names):
+        ncol += 1
+    if ncol*nrow < len(names):
+        nrow += 1
+    #nrow, ncol = 1, 3
+    # sort names
+    #names = sorted(names, key=lambda x: _sorter(x)); print names; nrow, ncol = 4, 6; name2id = {n: i for i, n in enumerate(names)}
+    
+    # plot
+    fig, subplots = plt.subplots(nrow, ncol, sharey='all', sharex='all', figsize=(ncol*3, nrow*3+2))
     fig.suptitle(title, size=20)
+    i = 0
     for ii, freq in enumerate(snps):
-        ax = subplots[ii/y][ii%y] 
+        if selected and orgnames[ii] not in names or startswith and not orgnames[ii].startswith(startswith):
+            continue
+        if name2id:
+            i = name2id[orgnames[ii]]
+        if nrow>1:
+            ax = subplots[i/ncol][i%ncol]
+        else:
+            ax = subplots[i%ncol] 
         n, bins, patches = ax.hist(freq, bins, normed=0)#, stacked=True, color=colors, label=["+", "-"])
-        ax.set_title(names[ii])
+        ax.set_title(orgnames[ii])
         ax.grid(True)
+        i += 1
     # make y axis log
     #if log: plt.yscale('log')
-    plt.savefig(outfn, dpi=300, transparent=False) #orientation='landscape', 
+    plt.savefig(outfn, dpi=100, transparent=False)#, orientation='landscape')
     
 def main():
     import argparse
@@ -81,8 +125,12 @@ def main():
     parser.add_argument("-i", "--fnames", nargs="+", help="file(s) to process")
     parser.add_argument("-b", "--bins", default=50, type=int,
                         help="number of bins in histogram [%(default)s]")
-    parser.add_argument("-e", "--eid", default=-2, type=int,
+    parser.add_argument("-e", "--eid", default=0, type=int,
                         help="element of bam name (after . splitting) [%(default)s]")
+    parser.add_argument("-s", "--selected", nargs="+", default=[], help="select samples [all]")
+    parser.add_argument("-s2", "--startswith", default='', help="select samples that start with string [all]")
+    parser.add_argument("--ext", default="png", choices=['png', 'svg', 'pdf', 'jpg'], 
+                        help="figure extension [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -110,9 +158,10 @@ def main():
         snps, names = load_snps(fn, snp2id, o.eid)
 
         for i, snp in enumerate(id2snp):
-            outfn = "%s.%s.png"%(fn, snp[:-1].replace('>','_'))
+            #if not snp.startswith('A>G'): continue
+            outfn = "%s.%s.%s"%(fn, snp[:-1].replace('>','_'), o.ext)
             print i, snp, outfn
-            plot_hist(o.bins, names, outfn, snps[i], snp[:-1])
+            plot_hist(o.bins, names, outfn, snps[i], snp[:-1], o.selected, o.startswith)
 
 if __name__=="__main__":
     main()

@@ -368,7 +368,7 @@ def main():
     for fn in o.dna+o.rna:
         if not os.path.isfile(fn+".bai"):
             cmd = "samtools index %s"%fn
-            if verbose:
+            if o.verbose:
                 sys.stderr.write(" %s\n"%cmd)
             os.system(cmd)
 
