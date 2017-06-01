@@ -154,13 +154,17 @@ def main():
             id2snp.append(snp)
 
     for fn in o.fnames:
-        print fn
         snps, names = load_snps(fn, snp2id, o.eid)
-
+        print fn
+        #print "snp\ttotal\tmean\tstdev\tmin\tmax\t%s"%"\t".join(names)
+        print "snp\t" + "\t".join(names)
+        oline = "%s\t"*6
         for i, snp in enumerate(id2snp):
             #if not snp.startswith('A>G'): continue
+            lens = map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
+            #print oline%(snp, sum(lens), np.mean(lens), np.std(lens), min(lens), max(lens)) + "\t".join(map(str, lens))
+            print "%s\t"%snp + "\t".join(map(str, lens))
             outfn = "%s.%s.%s"%(fn, snp[:-1].replace('>','_'), o.ext)
-            print i, snp, outfn
             plot_hist(o.bins, names, outfn, snps[i], snp[:-1], o.selected, o.startswith)
 
 if __name__=="__main__":
