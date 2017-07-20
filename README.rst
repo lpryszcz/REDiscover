@@ -40,8 +40,15 @@ Finally, reads with basecall quality below 20 (0.01 probability of error) for gi
 =============
 Prerequisites
 =============
-- Python 2.7+ & numpy `sudo easy_install -U numpy`
+- Python 2.7+
 - `samtools <http://www.htslib.org/>`_
+- `pysam <https://github.com/pysam-developers/pysam>`_
+- `FastaIndex <https://github.com/lpryszcz/FastaIndex>`_
+
+All above can be installed easily with bioconda:
+```bash
+conda install samtools pysam FastaIndex
+```
 
 =====
 Usage
