@@ -42,7 +42,7 @@ def bam2calls_simple(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=3
     strandsNo = 2
     basesize = strandsNo*len(alphabet)
     n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64")
+    calls = np.zeros(n, dtype="int64") # for compatibility with list
     # stop if ref not in sam file
     if ref not in sam.references:
         if ref.startswith('chr') and ref[3:] in sam.references:
@@ -58,12 +58,13 @@ def bam2calls_simple(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=3
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
-        if stranded=="firststrand":
+        if stranded=="firststrand": 
             if not is_antisense(a):
                 i = len(alphabet)
         # unstranded or secondstrand
         elif is_antisense(a):
             i = len(alphabet)
+        # add alignment blocks
         for refi, block in get_blocks_simple(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
             calls[s:e] += block
@@ -146,13 +147,11 @@ def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded, bam2calls):
 def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded,
                  mapq, baseq, maxStrandBias, advancedFiltering, verbose):
     """Return RNA editing positions"""
-    # define strands
+    # define strands - strands from individual files will be dealt later
     if not stranded[0]:
         strands = "." # unstranded
-    elif stranded[0] == "firststrand":
-        strands = "-+" # reads coming from sense strand
     else:
-        strands = "+-" # reads coming from antisense strand
+        strands = "+-"
         
     # select simple or more advanced (slower) filtering
     bam2calls = bam2calls_simple

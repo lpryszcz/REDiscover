@@ -126,12 +126,18 @@ def get_blocks(a, start, end, baseq, i, basesize):
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand,
-    meaning first-in-pair aligned to reverse strand"""
+    meaning first-in-pair or unpaired aligned to reverse strand, 
+    or second-in-pair aligned to forward strand.
+    """
+    # antisense if reverse
     if a.is_reverse:
+        # and first in pair or unpaired
         if a.is_read1 or not a.is_paired:
             return 1
+    # or forward and second in pair
     elif a.is_read2:
         return 1
+    # otherwise sense
     return 0
         
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
