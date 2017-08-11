@@ -24,32 +24,36 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples)
     """SNP generator"""
     ppos = 0
     snps = []
-    for l in handle: 
-        ldata = l.replace('\t\t','\t')[:-1].split('\t')
-        if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
-            for out in outs.itervalues():
-                out.write(l)
-            continue
-        chrom, pos, snp = ldata[:3]
-        if ppos!=pos:
-            if snps:
-                yield snps
-            ppos = pos
-            snps = []    
-        # unstranded
-        if snp[-1] == ".":
-            snp = snp.replace(".", "+")
-        if not chrom.startswith('chr'):
-            chrom = "chr%s"%chrom
-        # skip if present in dbSNP
-        if chrom in dbSNP and int(pos) in dbSNP[chrom]:
-            continue
-        sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
-        # enough depth, frequency and more than 3 reads in alt allele    
-        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq) \
-                     & (sampledata[:, 0]*sampledata[:, 1]>=minAltReads))
-        # store
-        snps.append((l, passed, chrom, pos, snp))
+    try:
+        for l in handle: 
+            ldata = l.replace('\t\t','\t')[:-1].split('\t')
+            if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
+                for out in outs.itervalues():
+                    out.write(l)
+                continue
+            chrom, pos, snp = ldata[:3]
+            if ppos!=pos:
+                if snps:
+                    yield snps
+                ppos = pos
+                snps = []    
+            # unstranded
+            if snp[-1] == ".":
+                snp = snp.replace(".", "+")
+            if not chrom.startswith('chr'):
+                chrom = "chr%s"%chrom
+            # skip if present in dbSNP
+            if chrom in dbSNP and int(pos) in dbSNP[chrom]:
+                continue
+            sampledata = np.array(map(float, ldata[3:])).reshape(len(ldata[3:])/2, 2)
+            # enough depth, frequency and more than 3 reads in alt allele    
+            passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq) \
+                         & (sampledata[:, 0]*sampledata[:, 1]>=minAltReads))
+            # store
+            snps.append((l, passed, chrom, pos, snp))
+    except Exception, e:
+        sys.stderr.write('[WARNING] Error parsing %s: %s\n'%(handle.name, str(e)))
+        
     if snps:
         yield snps
 

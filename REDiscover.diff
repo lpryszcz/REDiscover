@@ -13,9 +13,10 @@ and parse through them yielding one base at a time?
 - process ref bam in the same filtering run
 - add post-filtering - this is done by get_enrichment.py:
  - skip regions having ie. 2+ types of changes withing 10-20bp
+- mutual information?
 """
 epilog="""Author:
-l.p.pryszcz@gmail.com
+l.p.pryszcz+git@gmail.com
 
 Warsaw/Bratislava/Fribourg, 21/07/2015
 """
@@ -444,7 +445,9 @@ def main():
                     
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
                              o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.advancedFiltering, o.verbose, o.chrs)
-        
+
+    #~/src/REDiscover/get_enrichment.py -i editing.gz -d 10 -f 0.05 -n 1 2 3 4 5 10 --dist 300
+    
 if __name__=='__main__': 
     t0 = datetime.now()
     try:
