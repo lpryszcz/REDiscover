@@ -148,9 +148,12 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
     """Return RNA editing positions"""
     # define strands
     if not stranded[0]:
-        strands = "."  
+        strands = "." # unstranded
+    elif stranded[0] == "firststrand":
+        strands = "-+" # reads coming from sense strand
     else:
-        strands = "+-"
+        strands = "+-" # reads coming from antisense strand
+        
     # select simple or more advanced (slower) filtering
     bam2calls = bam2calls_simple
     if advancedFiltering:
