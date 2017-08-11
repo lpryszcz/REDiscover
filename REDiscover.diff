@@ -286,7 +286,7 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     header = "## %s\n"%" ".join(sys.argv)
     header += "## %s\n" % "\t".join(rna)
     header += "## %s\n" % "\t".join(stranded)
-    header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\t%s alt freq"%(fn, fn) for fn in rna)
+    header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\talt freq"%fn for fn in rna)
     # http://stackoverflow.com/a/22311297/632242
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     header = z.compress(header) + z.flush()
