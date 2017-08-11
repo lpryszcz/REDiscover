@@ -161,7 +161,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
     posinfo = "%s\t%s\t%s>%s%s"
     ref, start, end = position
     if dna:
-        refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded, bam2calls)
+        refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, 0, bam2calls)
     else:
         refparser = fasta2calls(fasta, ref, start, end)
     parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
