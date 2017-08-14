@@ -4,7 +4,7 @@ desc="""Plot histogram from REDiscover.diff output.
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
 
-Warsaw, 231/05/2017
+Warsaw, 31/05/2017
 """
 
 import os, sys, gzip

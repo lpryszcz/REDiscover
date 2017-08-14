@@ -31,6 +31,10 @@ from FastaIndex import FastaIndex
 from REDiscover import logger, base2index, alphabet, fasta2calls, get_blocks, get_blocks_simple, is_antisense, is_qcfail, is_duplicate
 import bam2strandness
 
+# needed by get_enrichment
+root = os.path.dirname(os.path.abspath(sys.argv[0]))
+os.environ["PATH"] = "%s:%s"%(os.environ["PATH"], root)
+
 def bam2calls_simple(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.1, window=10):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
@@ -302,7 +306,7 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
 
     i = 0
     if threads<2: # this is useful for debugging
-        #regions = list(regions)[20:]
+        #regions = list(regions)[1:2]
         for i, region in enumerate(regions, 1):
             parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
                                   stranded, mapq, bcq, maxStrandBias, advancedFiltering, verbose)
@@ -370,32 +374,38 @@ def main():
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.15b')
     parser.add_argument("-o", "--out", required=1, help="output file")
-    parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
-    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
+    parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+    
     refpar = parser.add_mutually_exclusive_group(required=True)
     refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default='', help="reference FASTA file")
     parser.add_argument("-r", "--rna", nargs="+", help="input RNA-Seq BAM file(s)")
     strand = parser.add_mutually_exclusive_group()
-    parser.add_argument("-g", "--gtf", default="", help="auto dectection of strandness [unstranded]")
-    parser.add_argument("-u", "--unstranded", action="store_true",
-                        help="unstranded RNAseq libraries [auto]")
-    parser.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
-                        help="stranded RNAseq libraries ie. Illumina or Standard Solid [auto]")
-    parser.add_argument("-fr-firststrand", default=False, action="store_true", 
+    strand.add_argument("-g", "--gtf", default="", help="GTF/GFF for auto-detection of strandness")
+    strand.add_argument("-u", "--unstranded", action="store_true",
+                        help="unstranded RNAseq libraries")
+    strand.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
+                        help="stranded RNAseq libraries ie. Illumina or Standard Solid")
+    strand.add_argument("-fr-firststrand", default=False, action="store_true", 
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
+    
+    parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
+    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
+
     parser.add_argument("--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("--minDNAfreq",  default=0.99, type=float,
                         help="min frequency for DNA base [%(default)s]")
     parser.add_argument("--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
-    parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
-    parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
     parser.add_argument("-m", "--maxStrandBias", default=0.1, type=float, help="max allowed strand bias [%(default)s]")
-    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
     parser.add_argument("-a", "--advancedFiltering", action="store_true",
-                        help="enable advanced filtering (slow, but more accurate)")
+                        help="enable advanced filtering (slightly more accurate, but much slower)")
+    # get enrichment parameters
+    parser.add_argument("--dbSNP", default=[], nargs="+", help="dbSNP file")    
+    parser.add_argument("--dist", default=300, type=int, help="distance between SNPs in cluster [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -444,11 +454,18 @@ def main():
     if o.stranded[0] and is_any_lib_single(o.rna): 
         logger("[WARNING] Stranded and single-end libraries present: disabled maxStrandBias!", 0)
         o.maxStrandBias = 0
-                    
+
+    # get differential editing
     get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
                              o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.advancedFiltering, o.verbose, o.chrs)
 
-    #~/src/REDiscover/get_enrichment.py -i editing.gz -d 10 -f 0.05 -n 1 2 3 4 5 10 --dist 300
+    logger("Filtering...")
+    # run get_enrichment
+    cmd = " get_enrichment.py -i %s -d %s -f %s --dist %s"%(o.out, o.minDepth, o.minAltfreq, o.dist)
+    if o.dbSNP:
+        cmd += " --dbSNP %s "% " ".join(o.dbSNP)
+    logger(cmd)
+    os.system(cmd)
     
 if __name__=='__main__': 
     t0 = datetime.now()

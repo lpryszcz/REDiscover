@@ -188,8 +188,8 @@ def get_enrichment(fnames, snps, minDepth, minAltfreq, minAltReads, minsamples, 
             snp2c = minSamplesSNP2c[n]
             total = sum(snp2c.itervalues())
             if not total:
-                sys.stderr.write("[WARNING] No editing in %s\n"%(fn, ))
-                continue
+                sys.stderr.write("[WARNING] No editing in %s. Stop!\n"%fn)
+                break
             # get freqs and strand enrichment
             strands = []
             freqs = []
@@ -211,15 +211,15 @@ def main():
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
     parser.add_argument('--version', action='version', version='1.15b')
     parser.add_argument("-i", "--fnames", nargs="+", help="files to process")
-    parser.add_argument("-s", "--snps", default=[], nargs="+", help="dbSNP file")
+    parser.add_argument("-s", "--snps", "--dbSNP", default=[], nargs="+", help="dbSNP file")
     parser.add_argument("-d", "--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
     parser.add_argument("-f", "--minAltfreq",  default=0.01, type=float,
                         help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("-a", "--minAltReads",  default=3, type=int,
                         help="min number of reads with alternative base [%(default)s]")
-    parser.add_argument("-n", "--minsamples", nargs="+", default=[1], type=int, help="number of samples [%(default)s]")
-    parser.add_argument("--dist", default=30, type=int, help="distance between SNPs in cluster [%(default)s]")
+    parser.add_argument("-n", "--minsamples", nargs="+", default=[1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300], type=int, help="number of samples [%(default)s]")
+    parser.add_argument("--dist", default=300, type=int, help="distance between SNPs in cluster [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
