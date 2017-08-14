@@ -147,7 +147,7 @@ def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded, bam2calls):
 def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded,
                  mapq, baseq, maxStrandBias, advancedFiltering, verbose):
     """Return RNA editing positions"""
-    # define strands - strands from individual files will be dealt later
+    # define strands - strands from individual files are handled by bam2calls
     if not stranded[0]:
         strands = "." # unstranded
     else:

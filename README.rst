@@ -88,7 +88,7 @@ Most of REDiscover parameters can be adjusted manually (default values are given
 
 Test run
 ~~~~~~~~
-To run the test example, first download & unpack the test dataset.
+To run the test example, first download & unpack `the test dataset <http://zdglab.iimcb.gov.pl/lpryszcz/REDiscover/test.tgz>`_:
 
 .. code-block:: bash
 
@@ -100,7 +100,7 @@ Then execute `REDiscover.diff`:
 
 .. code-block:: bash
 
-~/src/REDiscover/REDiscover.diff -f test/ref.fa -r test/star/*.bam -o test/editing.gz
+   ~/src/REDiscover/REDiscover.diff -f test/ref.fa -r test/star/*.bam -o test/editing.gz
 
 
 You can also use older version of REDiscover, by executing: 
