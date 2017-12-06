@@ -39,7 +39,7 @@ def bam2strandness(bam, regions, mapq, verbose):
     outfn = bam+".strand"
     if not os.path.isfile(outfn):
         sam = pysam.AlignmentFile(bam)
-        for ref, start, end, strand in regions:    
+        for ref, start, end, strand in regions:
             # stop if ref not in sam file
             if ref not in sam.references:
                 continue

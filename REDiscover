@@ -40,16 +40,48 @@ def is_qcfail(a, mapq=15):
     if a.mapq<mapq or a.flag&3840 or is_heavily_clippped(a): 
         return True
         
-def _match(refi, readi, bases): return refi+bases, readi+bases, True
-def _insertion(refi, readi, bases): return refi, readi+bases, []
-def _softclip(refi, readi, bases): return refi, readi+bases, True
-def _deletion(refi, readi, bases): return refi+bases, readi, []
-def _skip(refi, readi, bases): return refi, readi, []
-code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                 2: _deletion, 3: _deletion, 4: _softclip, 5: _skip}
+def get_blocks_simple(a, start, end, baseq, i, basesize):
+    """Return tuple of aligned position of query and reference"""
+    def _match(refi, readi, bases): return refi+bases, readi+bases, True
+    def _insertion(refi, readi, bases): return refi, readi+bases, []
+    def _deletion(refi, readi, bases): return refi+bases, readi, []
+    def _skip(refi, readi, bases): return refi, readi, []
+    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
+                     2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
+    
+    readi, refi = 0, a.pos
+    for ci, (code, bases) in enumerate(a.cigar):
+        prefi, preadi = refi, readi
+        refi, readi, data = code2function[code](refi, readi, bases)
+        # skip if not alignment or 
+        if not data or refi<start-1:
+            continue
+        # typical alignment part
+        if prefi<start:
+            bases -= start-prefi
+            preadi += start-prefi
+            prefi = start
+        if refi>end:
+            bases -= refi-end
+        if bases<1:
+            break
+        block = [0]*basesize*bases 
+        for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
+            if q<baseq or b not in base2index:
+                continue
+            block[ii*basesize+base2index[b]+i] += 1
+        yield prefi, block
 
 def get_blocks(a, start, end, baseq, i, basesize):
     """Return tuple of aligned position of query and reference"""
+    def _match(refi, readi, bases): return refi+bases, readi+bases, True
+    def _insertion(refi, readi, bases): return refi, readi+bases, []
+    def _softclip(refi, readi, bases): return refi, readi+bases, True
+    def _deletion(refi, readi, bases): return refi+bases, readi, []
+    def _skip(refi, readi, bases): return refi, readi, []
+    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
+                     2: _deletion, 3: _deletion, 4: _softclip, 5: _skip}
+
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
@@ -89,17 +121,23 @@ def get_blocks(a, start, end, baseq, i, basesize):
                 continue
             block[ii*basesize+base2index[b]+i] += 1
             # add fwd strand signals
-            if not a.is_reverse: block[ii*basesize+base2index[b]+2*len(alphabet)+i] += 1            
+            if not a.is_reverse: block[ii*basesize+base2index[b]+2*len(alphabet)+i] += 1
         yield prefi, block, 0
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand,
-    meaning first-in-pair aligned to reverse strand"""
+    meaning first-in-pair or unpaired aligned to reverse strand, 
+    or second-in-pair aligned to forward strand.
+    """
+    # antisense if reverse
     if a.is_reverse:
+        # and first in pair or unpaired
         if a.is_read1 or not a.is_paired:
             return 1
+    # or forward and second in pair
     elif a.is_read2:
         return 1
+    # otherwise sense
     return 0
         
 def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
