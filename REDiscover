@@ -1,128 +1,84 @@
 #!/usr/bin/env python
-desc="""Identify RNA editing sites from RNAseq and DNAseq alignements (.bam).
-Alternatively, reference genome can be used instead of DNAseq,
-but at the cost of higher false positive. 
+desc="""Identify differential RNA editing sites from multiple RNAseq experiments (.bam).
 
-TBD:
-- editing from heterozygous sites?
+TBA:
+- cap at some max coverage ie. 800X
+- maybe instead of processing individual reads, I could preload all reads from the region
+and parse through them yielding one base at a time?
+- process ref bam in the same filtering run
+- mutual information?
+- proper indel handling
 """
 epilog="""Author:
-l.p.pryszcz@gmail.com
+l.p.pryszcz+git@gmail.com
 
 Warsaw/Bratislava/Fribourg, 21/07/2015
 """
 
-import os, sys, pysam, resource
+import os, sys, pysam, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
+from itertools import izip
+from FastaIndex import FastaIndex
+import bam2strandness
 
-alphabet = "ACGT"
+alphabet = "ACGTid" # i=insertion d=deletion
 base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()):
     base2index[b] = i
 
-def is_duplicate(a, pa):
-    """Return True if read is duplicate"""
-    if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
-        return True
+# needed by get_enrichment
+root = os.path.dirname(os.path.abspath(sys.argv[0]))
+os.environ["PATH"] = "%s:%s"%(os.environ["PATH"], root)
 
-def is_heavily_clippped(a, maxfrac=0.05):
-    """Return True if fraction of read being soft-clipped is larger than maxfrac"""
-    # https://samtools.github.io/hts-specs/SAMv1.pdf
-    clipped_bases = sum(bases for code, bases in a.cigar if code==4)
-    clipped_frac = 1.*clipped_bases/a.rlen
-    if clipped_frac>maxfrac:
-        return True
-        
-def is_qcfail(a, mapq=15):
-    """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.flag&3840 or is_heavily_clippped(a): 
-        return True
-        
-def get_blocks_simple(a, start, end, baseq, i, basesize):
-    """Return tuple of aligned position of query and reference"""
-    def _match(refi, readi, bases): return refi+bases, readi+bases, True
-    def _insertion(refi, readi, bases): return refi, readi+bases, []
-    def _deletion(refi, readi, bases): return refi+bases, readi, []
-    def _skip(refi, readi, bases): return refi, readi, []
-    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                     2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
-    
+# CIGAR operations
+"""Op BAM Description +1Q +1R
+M 0 alignment match (can be a sequence match or mismatch) yes yes
+I 1 insertion to the reference yes no
+D 2 deletion from the reference no yes
+N 3 skipped region from the reference no yes
+S 4 soft clipping (clipped sequences present in SEQ) yes no
+H 5 hard clipping (clipped sequences NOT present in SEQ) no no
+P 6 padding (silent deletion from padded reference) no no
+= 7 sequence match yes yes
+X 8 sequence mismatch yes yes
+    """
+def _match(refi, readi, bases): return refi+bases, readi+bases, True
+def _insertion(refi, readi, bases): return refi, readi+bases, []
+def _deletion(refi, readi, bases): return refi+bases, readi, []
+def _skip(refi, readi, bases): return refi, readi, []
+code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
+                 2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
+
+def get_blocks(a, start, end, baseq, i, basesize, inblock=[0, 0, 0, 0, 1, 0], delblock=[0, 0, 0, 0, 0, 1]):
+    """Return tuple of aligned position of query and reference. INDEL aware."""
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
         refi, readi, data = code2function[code](refi, readi, bases)
-        # skip if not alignment or 
-        if not data or refi<start-1:
-            continue
         # typical alignment part
-        if prefi<start:
-            bases -= start-prefi
-            preadi += start-prefi
-            prefi = start
-        if refi>end:
-            bases -= refi-end
-        if bases<1:
-            break
-        block = [0]*basesize*bases 
-        for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
-            if q<baseq or b not in base2index:
-                continue
-            block[ii*basesize+base2index[b]+i] += 1
-        yield prefi, block
-
-def get_blocks(a, start, end, baseq, i, basesize):
-    """Return tuple of aligned position of query and reference"""
-    def _match(refi, readi, bases): return refi+bases, readi+bases, True
-    def _insertion(refi, readi, bases): return refi, readi+bases, []
-    def _softclip(refi, readi, bases): return refi, readi+bases, True
-    def _deletion(refi, readi, bases): return refi+bases, readi, []
-    def _skip(refi, readi, bases): return refi, readi, []
-    code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
-                     2: _deletion, 3: _deletion, 4: _softclip, 5: _skip}
-
-    readi, refi = 0, a.pos
-    for ci, (code, bases) in enumerate(a.cigar):
-        prefi, preadi = refi, readi
-        refi, readi, data = code2function[code](refi, readi, bases)
-        # mark soft-clipped & indels regions
-        if code in (1, 2, 4):
-            if code in (1, 2) and bases<25:
-                bases = 25
-            ## mark on both sides
-            prefi-=bases
-            bases = 2*bases
-            if code==2:
-                bases += bases
-            _refi = prefi + bases
+        if data and refi>start:
             if prefi<start:
                 bases -= start-prefi
+                preadi += start-prefi
                 prefi = start
-            if _refi>end:
-                bases -= _refi-end
-            yield prefi, code, bases
-            continue
-        # skip if not alignment or 
-        if not data or refi<start-1:
-            continue
-        # typical alignment part
-        if prefi<start:
-            bases -= start-prefi
-            preadi += start-prefi
-            prefi = start
-        if refi>end:
-            bases -= refi-end
-        if bases<1:
-            break
-        block = [0]*basesize*bases 
-        for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
-            if q<baseq or b not in base2index:
-                continue
-            block[ii*basesize+base2index[b]+i] += 1
-            # add fwd strand signals
-            if not a.is_reverse: block[ii*basesize+base2index[b]+2*len(alphabet)+i] += 1
-        yield prefi, block, 0
+            if refi>end:
+                bases -= refi-end
+            if bases<1:
+                break
+            block = [0]*basesize*bases 
+            for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
+                if q<baseq or b not in base2index:
+                    continue
+                block[ii*basesize+base2index[b]+i] += 1
+            yield prefi, block
+        # insertion
+        elif code==1:
+            yield prefi, [0]*i+inblock
+        # deletion
+        elif code==2:
+            yield prefi, [0]*i+delblock
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand,
@@ -140,19 +96,26 @@ def is_antisense(a):
     # otherwise sense
     return 0
         
-def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
-    """Return 2D array of basecalls from BAM file, as follows
-    - 1D positions from start to end
-    - 2D base counts for ACGT from sense and antisense strand at given position
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.1, window=10):
+    """Return 3D array of basecalls from BAM file, as follows:
+    - 1D positions from start to end of the ref
+    - 2D sense and antisense strand
+    - 3D base counts for ACGT
     """
     sam = pysam.AlignmentFile(bam)
     # ACGT x2 for each strand
-    basesize = 2*len(alphabet)
+    strandsNo = 2
+    basesize = strandsNo*len(alphabet)
     n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64") 
+    calls = np.zeros(n, dtype="int64") # for compatibility with list
     # stop if ref not in sam file
     if ref not in sam.references:
-        return calls.reshape((end-start+1, basesize))
+        if ref.startswith('chr') and ref[3:] in sam.references:
+            ref = ref[3:]
+        elif 'chr%s'%ref in sam.references:
+            ref = 'chr%s'%ref
+        else:
+            return calls.reshape((end-start+1, strandsNo, len(alphabet)))
     pa = None  
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa):
@@ -160,22 +123,29 @@ def bam2calls(bam, ref, start, end, mapq=15, baseq=20, offset=33):
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
-        if is_antisense(a):
+        if stranded=="firststrand": 
+            if not is_antisense(a):
+                i = len(alphabet)
+        # unstranded or secondstrand
+        elif is_antisense(a):
             i = len(alphabet)
+        # add alignment blocks
         for refi, block in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
             calls[s:e] += block
-    return calls.reshape((end-start+1, basesize))
+            
+    calls = calls.reshape((end-start+1, strandsNo, len(alphabet)))            
+    return calls
 
-def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded=0):
-    """Combine basecalls from several files"""
-    parsers = (bam2calls(bam, ref, start, end, mapq, baseq) for bam in bams)
-    for call in np.sum(parsers, axis=0): 
+def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded, bam2calls):
+    """Combine basecalls from several files""" 
+    parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams) 
+    for call in np.sum(parsers, axis=0):
         if stranded:
-            yield (call[:len(alphabet)], call[len(alphabet):])
+            yield (call[0], call[1])
         else:
-            yield (call[:len(alphabet)] + call[len(alphabet):])
-        
+            yield call[0] + call[1]
+
 def fasta2calls(fastafn, ref, start, end, cov=100):
     """Return list of basecalls from FastA file."""
     fasta = pysam.FastaFile(fastafn)
@@ -186,138 +156,114 @@ def fasta2calls(fastafn, ref, start, end, cov=100):
         if b in base2index:
             call[base2index[b]] += cov
         yield call
-
-def get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth):
-    """Return basecalls from multiple BAM (& FastA) file(s)"""
-    # define strands
-    if not stranded:
-        strands = "."  # unstranded
-    elif stranded=="firststrand":
-        strands = "-+" # dUTP, NSR, NNSR
-    else:
-        strands = "+-" # Illumina or Standard Solid
-    # get parsers    
-    rnaparser = get_combined_calls(rna, ref, start, end, mapq, baseq, stranded)
-    if dna:
-        dnaparser = get_combined_calls(dna, ref, start, end, mapq, baseq, stranded=0)
-    else:
-        dnaparser = fasta2calls(fasta, ref, start, end)
-    # process
-    for pos, (dnacall, rnacalls) in enumerate(zip(dnaparser, rnaparser), start+1):
-        if sum(dnacall)<minDepth:
-            continue
-        '''for strand, rnacall in zip(strands, rnacalls):
-            if sum(rnacall)<minDepth:
-                continue
-            yield ref, pos, strand, dnacall, rnacall'''
-        strand_info = sorted(zip(rnacalls, strands), key=lambda x: sum(x[0]), reverse=1)
-        yield ref, pos, dnacall, strand_info
-
-def get_major_alleles(bases, freqs, maxfrac=0.33):
-    """Return two lists: major alleles and their frequeinces"""
-    if len(bases)<2:
-        return bases, freqs
-    tokeep = set(i for i, f in enumerate(freqs) if f >= maxfrac * max(freqs))
-    return [b for i, b in enumerate(bases) if i in tokeep], [f for i, f in enumerate(freqs) if i in tokeep]
-                    
-def get_allele_freqs(counts, minFreq=0.03, minCount=3):
-    """Return two lists: alleles that passed filtering and their frequencies"""
-    bases, freqs = [], []
-    for c, b in zip(counts, alphabet):
-        freq = 1.*c/sum(counts)
-        # skip if alt base calling if less than 3 reads or low freq
-        if c >= minCount and freq >= minFreq:
-            bases.append(b)
-            freqs.append(freq)
-    return bases, freqs
-
-def region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, baseq, 
-                   report_alternatives, verbose, ref="", start="", end=""):
+            
+def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded,
+                 mapq, baseq, maxStrandBias, verbose):
     """Return RNA editing positions"""
-    parser = get_calls(dna, rna, fasta, stranded, ref, start, end, mapq, baseq, minDepth)
-    #for contig, pos, strand, refbases, sbases in parser:
-    for contig, pos, refbases, strand_info in parser:
-        baseRef, refFreq = get_allele_freqs(refbases, minDNAfreq)
-        if not baseRef: continue
-        # keep only major allele(s) - not needed currently
-        #baseRef, refFreq = get_major_alleles(baseRef, refFreq)
-
-        pbases = set()
-        for sbases, strand in strand_info:
-            if sum(sbases)<minDepth: continue
-            
-            bases, freqs = get_allele_freqs(sbases, minRNAfreq)
-            if not bases or bases==baseRef: continue
-            
-            # remove ref base from alternative bases
-            refBase = baseRef[0]
-            if refBase in bases:
-                idx = bases.index(refBase)
-                bases.pop(idx)
-                freqs.pop(idx)
-
-            if not report_alternatives:
-                # keep only major allele(s) from sample, but after removing ref allele
-                bases, freqs = get_major_alleles(bases, freqs)
-
-                if len(bases) > 1:
-                    info = "[WARNING] More than 1 alternative allele: %s:%s %s %s %s\n"
-                    sys.stderr.write(info%(contig, pos, ",".join(baseRef), ",".join(bases), str(freqs)))
+    # define strands - strands from individual files are handled by bam2calls
+    if not stranded[0]:
+        strands = "." # unstranded
+    else:
+        strands = "+-"
+        
+    # 
+    info = []
+    z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    posinfo = "%s\t%s\t%s>%s%s"
+    ref, start, end = position
+    if dna:
+        refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, 0, bam2calls)
+    else:
+        refparser = fasta2calls(fasta, ref, start, end)
+    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
+    for pos, calls in enumerate(izip(refparser, *parsers), start+1):
+        refcall, bamcalls = calls[0], np.array(calls[1:])#; print pos, calls
+        # low dna coverage ie. N
+        refcov = sum(refcall)
+        if refcov < minDepth:
+            continue
+        refi = np.argmax(refcall)
+        reffreq = 1.*refcall[refi]/refcov
+        if reffreq < minDNAfreq:
+            continue
+        refbase = alphabet[refi]
+        # collapse both strands for unstranded data, without changing dimensions
+        if not stranded[0]:
+            bamcalls[:, 0] += bamcalls[:, 1]
+        # process strands
+        for si, strand in enumerate(strands):
+            # skip if low coverage in all samples
+            coverage = bamcalls[:, si].sum(axis=1)
+            if coverage.max() < minDepth:
+                continue
+            # process alt bases
+            for bi, base in enumerate(alphabet):
+                # skip reference and if less than 3 reads per allele
+                if bi==refi or bamcalls[:, si, bi].max()<3:
                     continue
-
-            # report 
-            for altbase, altfreq in zip(bases, freqs):
-                # skip signal from antisense if altbase already added and 5x lower coverage
-                ## this is not perfect, as it'll ignore also higher freq editing from sense
-                ## if antisense has much higher coverage but low freq
-                if altbase in pbases: # and 2.*sum(sbases)<pcov:
-                    continue
-                yield contig, pos, strand, refBase, altbase, sum(refbases), refFreq[0], sum(sbases), altfreq
-            # store variables
-            pbases = set(bases)
-
-def init_args(*args):
-    global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose
-    dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose = args
+                # store if freq of at least one larger than minfreq
+                freqs = 1.* bamcalls[:, si, bi] / coverage
+                if np.nanmax(freqs) >= minAltfreq:
+                    text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.3f"%d for d in zip(coverage, freqs)) + "\n")
+                    if text:
+                         info.append(text)
+    info.append(z.flush())
+    logger(" %s:%s-%s"%position)                     
+    return "".join(info)
     
-def worker(args):
-    global dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq, mapq, bcq, report_alternatives, verbose
-    ref, start, end = args
-    totdata = []
-    for data in region2editing(dna, rna, fasta, stranded, minDepth, minDNAfreq, minRNAfreq,
-                               mapq, bcq, report_alternatives, verbose, ref, start, end):
-        totdata.append(data)
-    return totdata
+def init_args(*args):
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose
+    fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose = args
+    
+def worker(position):
+    # ignore all warnings
+    np.seterr(all='ignore')        
+    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, advancedFiltering, verbose
+    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, advancedFiltering, verbose)
+    
+def is_duplicate(a, pa):
+    """Return True if read is duplicate"""
+    if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
+        return True
+
+def is_qcfail(a, mapq=15):
+    """Return True if alignment record fails quality checks"""
+    if a.mapq<mapq or a.flag&3840: # or is_heavily_clippped(a): 
+        return True
+    
+def worker_coverage(args):
+    """return coverage"""
+    bam, ref, mapq = args
+    sam = pysam.Samfile(bam)
+    ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}
+    coverage = np.zeros(ref2len[ref], dtype='uint16')
+    for a in sam.fetch(reference=ref):
+        if is_qcfail(a, mapq): continue
+        # for some reason no blocks for LAST output
+        if a.blocks:
+            for s, e in a.blocks:
+                coverage[s:e] += 1
+        else:
+            coverage[a.pos:a.aend] += 1
+    return coverage
 
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
-            
-def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step=1000000,
-                        window_size=100, min_strandness=0.99):
-    """Return chromosome regions covered by at least mincov"""
+
+def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], verbose=0,  maxdist=16000, step=100000):
+    """Return chromosome regions covered by at least mincov."""
+    p = Pool(threads)
     sam = pysam.Samfile(bams[0])
     references, lengths = sam.references, sam.lengths
     for ref, length in zip(references, lengths):
-        #if ref.startswith('chr'): continue 
-        #if ref!="chr21": continue
+        if chrs and ref not in chrs:
+            if verbose:
+                sys.stderr.write(" skipped %s\n"%ref)
+            continue
         coverage = np.zeros(length, dtype='uint16')
-        strands = np.zeros(((length/window_size)+1, 2), dtype='float32')
-        for i, bam in enumerate(bams):
-            sam = pysam.Samfile(bam)
-            for a in sam.fetch(reference=ref):
-                if is_qcfail(a, mapq):
-                    continue
-                # store strand info
-                strands[a.pos/window_size, is_antisense(a)] += 1
-                # add alg blocks
-                for s, e in a.blocks:
-                    coverage[s:e] += 1
-            # get strand enrichment
-            sums = strands.sum(axis=1)
-            frac = (strands[sums>1].max(axis=1)/sums[sums>1]).mean()#; print ref, bam, frac
-            if stranded and frac<min_strandness:
-                sys.stderr.write("[WARNING] Low strandness (%.3f) in %s from chromosome %s\n"%(frac, bam, ref))
+        for _coverage in p.imap_unordered(worker_coverage, [(bam, ref, mapq) for bam in bams]):
+            coverage = np.max([coverage, _coverage], axis=0)
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
@@ -329,7 +275,108 @@ def get_covered_regions(bams, mincov=3, mapq=10, stranded=0, maxdist=16000, step
                 yield ref, s, s+step
                 s += step
             yield ref, s, e
+    
+def load_bed(fname):
+    """Return regions from BED file"""
+    if os.path.isfile(fname):
+        for l in open(fname):
+            if l.startswith('#') or not l[:-1]:
+                continue
+            ldata = l[:-1].replace(',','').split('\t')
+            if len(ldata) == 3:
+                ref, start, end = ldata
+            else:
+                ref, se = ldata[0].split(':')
+                start, end = se.split('-')
+            start, end = map(int, (start, end))
+            yield ref, start, end
+    else:
+        ref, se = fname.replace(',','').split('\t')[0].split(':')
+        start, end = se.split('-')
+        start, end = map(int, (start, end))
+        yield ref, start, end
+            
+def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
+                             stranded, mapq, bcq, threads, maxStrandBias, verbose, chrs):
+    """Get alternative base coverage and frequency for every bam file"""
+    out = open(outfn, "w")
+    header = "## %s\n"%" ".join(sys.argv)
+    header += "## %s\n" % "\t".join(rna)
+    header += "## %s\n" % "\t".join(stranded)
+    header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\talt freq"%fn for fn in rna)
+    # http://stackoverflow.com/a/22311297/632242
+    z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+    header = z.compress(header) + z.flush()
+    out.write(header)
 
+    logger("Genotyping...")
+    if regionsfn:
+        regions = load_bed(regionsfn)
+    else:
+        regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
+
+    i = 0
+    # this is useful for debugging 
+    if threads<2: 
+        regions = list(regions)[2:]
+        for i, region in enumerate(regions, 1):
+            parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
+                                  stranded, mapq, bcq, maxStrandBias, verbose)
+            for data in parser:
+                out.write(data)
+    else:
+        initargs = (fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, maxStrandBias, verbose)
+        p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=20)
+        parser = p.imap(worker, regions) #_unordered , chunksize=10
+        for i, data in enumerate(parser, 1):
+            out.write(data)
+            
+    logger("%s regions processed"%i)
+    out.close()
+
+def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66):
+    """Compute strandness"""
+    strands = []
+    skipUnstranded = False
+    toSkip = set()
+    for bam, reads, strandness in bam2strandness.process_bams(rna, gtf, mapq, subset, threads, verbose):
+        strand = ""
+        if strandness>=limit:
+            strand = "secondstrand"
+        elif 1.-strandness>=limit:
+            strand = "firststrand"
+        strands.append(strand)
+        if strand and .05<strandness<0.95:
+            sys.stderr.write(" [WARNING] %s poorly stranded: %.3f\n"%(bam, strandness))
+        if not reads:
+            sys.stderr.write(" [WARNING] %s without alignments!\n"%(bam, ))
+            toSkip.add(bam)
+            
+    # notify about mixed strandness
+    strandtypes = set(strands)
+    if len(strandtypes)>1 and "" in strandtypes:
+        sys.stderr.write("[WARNING] Mixing stranded and unstranded BAM files is not allowed: %s!\n"%str(strandtypes))
+        skipUnstranded = True
+        
+    if skipUnstranded or toSkip:
+        _rna, _strands = [], []
+        for fn, strand in zip(rna, strands):
+            if skipUnstranded and not strand or fn in toSkip:
+                sys.stderr.write(" %s skipped!\n"%fn)
+                continue
+            _rna.append(fn)
+            _strands.append(strand)
+        rna, strands = _rna, _strands
+        
+    return strands, rna
+
+def is_any_lib_single(bams):
+    """Return True if any lib is single-end"""
+    for bam in bams:
+        r = pysam.Samfile(bam).next()
+        if not r.is_paired:
+            return True
+    
 def logger(info, add_timestamp=1, add_memory=1, out=sys.stderr):
     """Report nicely formatted stream to stderr"""
     memory = timestamp = ""
@@ -347,30 +394,40 @@ def main():
     parser  = argparse.ArgumentParser(usage=usage, description=desc, epilog=epilog, \
                                       formatter_class=argparse.RawTextHelpFormatter)
     
-    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.15b')
-    parser.add_argument("-o", "--output", required=True,  help="output file")
-    parser.add_argument("-r", "--rna", nargs="+",  help="input RNA-Seq BAM file(s)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose")    
+    parser.add_argument('--version', action='version', version='1.2a')
+    parser.add_argument("-o", "--out", required=1, help="output file")
+    parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+    
     refpar = parser.add_mutually_exclusive_group(required=True)
-    refpar.add_argument("-d", "--dna", nargs="*", default = [],  help="input DNA-Seq BAM file(s)")
-    refpar.add_argument("-f", "--fasta", default = None,  help="reference FASTA file")
-    parser.add_argument("-s", "--stranded", "-fr-secondstrand", default=False, action="store_true", 
+    refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
+    refpar.add_argument("-f", "--fasta", default='', help="reference FASTA file")
+    parser.add_argument("-r", "--rna", nargs="+", help="input RNA-Seq BAM file(s)")
+    strand = parser.add_mutually_exclusive_group()
+    strand.add_argument("-g", "--gtf", default="", help="GTF/GFF for auto-detection of strandness")
+    strand.add_argument("-u", "--unstranded", action="store_true",
+                        help="unstranded RNAseq libraries")
+    strand.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
                         help="stranded RNAseq libraries ie. Illumina or Standard Solid")
-    parser.add_argument("-fr-firststrand", default=False, action="store_true", 
+    strand.add_argument("-fr-firststrand", default=False, action="store_true", 
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
-    parser.add_argument("-a", "--report_alternatives", default=False, action="store_true", 
-                        help="report sites with more than 1 alternative alleles")
+    
+    parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
+    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
+
     parser.add_argument("--minDepth", default=5,  type=int,
                         help="minimal depth of coverage [%(default)s]")
-    #parser.add_argument("--minAltReads", default=3,  type=int,
-    #                    help="minimum no. of reads with alternative base to call RNA editing [%(default)s]")
-    parser.add_argument("--minRNAfreq",  default=0.01, type=float,
-                        help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("--minDNAfreq",  default=0.99, type=float,
-                        help="min frequency for genomic base [%(default)s]")
-    parser.add_argument("-m", "--mapq", default=15, type=int, help="mapping quality [%(default)s]")
-    parser.add_argument("--bcq", default=20, type=int, help="basecall quality [%(default)s]")
-    parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+                        help="min frequency for DNA base [%(default)s]")
+    parser.add_argument("--minAltfreq",  default=0.01, type=float,
+                        help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-m", "--maxStrandBias", default=0.1, type=float, help="max allowed strand bias [%(default)s]")
+    
+    # get enrichment parameters
+    parser.add_argument("--dbSNP", default=[], nargs="+", help="dbSNP file")    
+    parser.add_argument("--dist", default=300, type=int, help="distance between SNPs in cluster [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -380,57 +437,57 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
      
-    # mark stranded protocol
-    if o.fr_firststrand:
-        o.stranded = "firststrand"
-    
+    # calculate differential editing if file doesn't exist
+    if not o.out.endswith('.gz'): o.out += ".gz"
+    if os.path.isfile(o.out) and open(o.out).readline():
+        sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
+        sys.exit(1)
+        
     # check if all input files exists
-    for fn in o.dna+o.rna:
-        if not os.path.isfile(fn):
+    for fn in o.dna+o.rna+[o.fasta]:
+        if fn and not os.path.isfile(fn):
             sys.stderr.write("No such file: %s\n"%fn)
             sys.exit(1)
 
-    # check if outfile exists and not empty
-    if o.output=="-":
-        output = sys.stdout
-    elif os.path.exists(o.output) and open(o.output).readline():
-        sys.stderr.write("The output file %s exists!\n"%o.output)
-        sys.exit(1)
-    else:
-        output = open(o.output, "w")
-
-    runinfo = " ".join(sys.argv)
-    header = "## %s\n# chr\tpos\tstrand\tref\talt\tref cov\tref freq\talt cov\talt freq\n"%runinfo
-    output.write(header)
-    output.flush()
-    
     logger("Indexing bam file(s)...")
-    for fn in o.dna + o.rna:
+    for fn in o.dna+o.rna:
         if not os.path.isfile(fn+".bai"):
             cmd = "samtools index %s"%fn
             if o.verbose:
                 sys.stderr.write(" %s\n"%cmd)
-            os.system(cmd)    
+            os.system(cmd)
 
-    logger("Genotyping...")
-    info = "%s\t%s\t%s\t%s\t%s\t%s\t%.3f\t%s\t%.3f\n"
-    regions = get_covered_regions(o.rna, o.minDepth, o.mapq, o.stranded)
-    if o.threads<2: # this is useful for debugging
-        for ref, start, end in regions:
-            parser = region2editing(o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
-                                    o.mapq, o.bcq, o.report_alternatives, o.verbose, ref, start, end)
-            for data in parser:
-                output.write(info%data)
+    # load fasta
+    if o.fasta:
+        FastaIndex(o.fasta)
+
+    # mark stranded protocol
+    if o.gtf and not o.unstranded:
+        logger("Detecting strandness in BAMs...")
+        o.stranded, o.rna = compute_strandness(o.rna, o.gtf, o.mapq, o.threads, o.verbose)
+    elif o.stranded:
+        o.stranded = ["secondstrand"]*len(o.rna)
+    elif o.fr_firststrand:
+        o.stranded = ["firststrand"]*len(o.rna)
     else:
-        initargs = (o.dna, o.rna, o.fasta, o.stranded, o.minDepth, o.minDNAfreq, o.minRNAfreq, \
-                    o.mapq, o.bcq, o.report_alternatives, o.verbose)
-        p = Pool(o.threads, initializer=init_args, initargs=initargs)
-        parser = p.imap(worker, regions)
-        for data in parser:
-            output.write("".join(info%d for d in data))
+        o.stranded = [""]*len(o.rna)
 
-    output.write("#Finished!\n")
-    logger("Done!")
+    # disable strandBias filter if stranded and single-end
+    if o.stranded[0] and is_any_lib_single(o.rna): 
+        logger("[WARNING] Stranded and single-end libraries present: disabled maxStrandBias!", 0)
+        o.maxStrandBias = 0
+
+    # get differential editing
+    get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
+                             o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.verbose, o.chrs)
+
+    logger("Filtering...")
+    # run get_enrichment
+    cmd = " get_enrichment.py -i %s -d %s -f %s --dist %s"%(o.out, o.minDepth, o.minAltfreq, o.dist)
+    if o.dbSNP:
+        cmd += " --dbSNP %s "% " ".join(o.dbSNP)
+    logger(cmd)
+    os.system(cmd)
     
 if __name__=='__main__': 
     t0 = datetime.now()
