@@ -15,6 +15,7 @@ import os, sys, pysam, resource, zlib, gzip
 from datetime import datetime
 from itertools import izip
 from collections import Counter
+from multiprocessing import Pool
 import numpy as np
 from REDiscover import logger, alphabet, base2index, code2function, get_consecutive, is_qcfail, is_duplicate
 
@@ -27,11 +28,12 @@ def header2bams(handle):
         header.append(l[3:-1])
     return header[1].split(), header[2].split()  
 
-def chr2pos(handle, window=100000): 
+def chr2pos(handle, out=sys.stdout, window=100000): 
     """Load editing candidates"""
     pchrom, pos = '', []
     for l in handle:
         if l.startswith('#'):
+            out.write(l)
             continue
         # get chrom and pos
         chrom, p = l[:-1].split()[:2]
@@ -89,28 +91,7 @@ def _match_bases(arr):
             d[b] = a
     arr[1][arr[1]==-1] = a0
     return arr
-    
-def _shift_bases(arr, ii=1, maxi=len(alphabet)):
-    """Return alphabet shifted by 1 base"""
-    arr[1] += ii
-    arr[1][arr[1]>maxi]-=maxi
-    return arr
-    
-def update_mutual_info0(mutual_info, calls, i, pos, minCommonReads=5):
-    """Calculate mutual information between given position and all other positions"""
-    # process only positions having at least minCommonReads
-    for j, in np.argwhere(np.sum(calls[i+1:,calls[i]>0]>0, axis=1)>=minCommonReads)+i+1:
-        # calculate hamming distance between calls & get corresponding bases - hth
-        arr = calls[[i,j]][:, np.all(calls[[i,j]], axis=0)]
-        hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. #min((_shift_bases(arr)[:, None] != arr).sum()/2. for _i in range(len(alphabet)))#(arr[:, None] != arr).sum()/2.
-        # store mutual information
-        mi = 1 - 1.* hammingdist / arr.shape[1]
-        if mi>mutual_info[i]:#[0]:
-            mutual_info[i] = mi #[mi, pos[j]]
-        if mi>mutual_info[j]:#[0]:
-            mutual_info[j] = mi #[mi, pos[i]]
-    return mutual_info
-    
+        
 def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
     """Calculate mutual information between given position and all other positions"""
     # process only positions having at least minCommonReads
@@ -128,7 +109,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         cols = [col[0] for b, _c in c.most_common() for col in np.argwhere(arr[ii]==b)[:altc]]#; print c, cols
         arr = arr[:, cols]
         # calculate hamming distance between calls & get corresponding bases - hth        
-        hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. #min((_shift_bases(arr)[:, None] != arr).sum()/2. for _i in range(len(alphabet)))#(arr[:, None] != arr).sum()/2.
+        hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. 
         # store mutual information
         #print arr.shape[1], arr
         mi = 1 - 1.* hammingdist / arr.shape[1]#; print pos[i], pos[j], hammingdist, mi, c.most_common()
@@ -143,7 +124,7 @@ def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000)
     calls = np.zeros((len(pos), maxdepth), dtype="int8", order='F')
     posset = set(pos)
     pos2idx = {p: idx for idx, p in enumerate(pos)}
-    mutual_info = np.zeros(len(pos)) #(len(pos), 2)) #[[] for i in range(len(pos))] #, dtype=('float', 'int')
+    mutual_info = np.zeros(len(pos)) 
     iread = pa = 0
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa): 
@@ -176,20 +157,54 @@ def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000)
     for i in range(calls.shape[0]):
         mutual_info = update_mutual_info(mutual_info, calls, i, pos)
         yield mutual_info[i]
-        
-def pos2mutual(fname, verbose):
+    
+def worker(data):
+    # ignore all warnings
+    np.seterr(all='ignore')
+    bam, strand, ref, pos = data
+    data = [d for d in bam2mutual_info(bam, strand, ref, pos)]
+    return data
+
+def line_generator(handle):
+    """Report lines"""
+    pchrom = pp = ''
+    lines = []
+    for l in handle:
+        if l.startswith('#'):
+            continue
+        # get chrom and pos
+        chrom, p = l[:-1].split()[:2]
+        p = int(p)-1 # 1-off to 0-off
+        # report    
+        if chrom != pchrom or p!=pp:
+            if lines:
+                # need to combine
+                yield lines[0]
+            lines = []
+        lines.append(l)
+    if lines:
+        yield lines[0]
+
+    
+def pos2mutual(fname, out=sys.stdout, verbose=1, log=sys.stderr):
     """Filter out positions with high mutual info"""\
     # parse header 
     handle = gzip.open(fname)
-    bams, strands = header2bams(handle)
-    # process 
-    for ref, pos in chr2pos(handle):
+    handle2 = gzip.open(fname)
+    bams, strands = header2bams(handle)#; bams=bams[:1]
+    # process
+    log.write("Processing chromosomes...\n")
+    for ref, pos in chr2pos(handle, out):
         #if ref!="tRNA.Gly.GCC.Bacillus_subtilis.prokaryotic_cytosol": continue
         parsers = [bam2mutual_info(bam, strand, ref, pos) for bam, strand in zip(bams, strands)]
-        print ref#, pos
-        for i, mi in enumerate(izip(*parsers)):
-            mi = np.array(mi)
-            print "%s:%s\t%.3f\t%s"%(ref, pos[i]+1, mi[mi>0].mean() if mi.sum() else 0, str(mi))#) #, mi[mi>0]
+        #p = Pool(len(bams))
+        #parsers = [p.imap(worker, [(bam, strand, ref, pos) for bam, strand in zip(bams, strands)])]
+        log.write("%s      \r"%ref)
+        for i, data in enumerate(izip(line_generator(handle2), *parsers)):
+            l = data[0]
+            mi = np.array(data[1:])
+            #print "%s:%s\t%.3f\t%s"%(ref, pos[i]+1, mi[mi>0].mean() if mi.sum() else 0, str(mi))#) #, mi[mi>0]
+            out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:4]), mi[mi>0].mean() if mi.sum() else 0, "\t".join(l.split("\t")[4:])))
         
 def main():
     import argparse
@@ -199,7 +214,8 @@ def main():
     
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose")
     parser.add_argument('--version', action='version', version='1.2a')
-    parser.add_argument("-i", "--input", default='', help="SNP file")
+    parser.add_argument("-i", "--input", default='', help="REDiscover variation file")
+    parser.add_argument("-o", "--out", default=sys.stdout, type=argparse.FileType("w"), help="output file")
 
     # print help if no parameters
     if len(sys.argv)==1:
@@ -209,7 +225,7 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
 
-    pos2mutual(o.input, o.verbose)
+    pos2mutual(o.input, o.out, o.verbose)
     
 if __name__=='__main__': 
     t0 = datetime.now()
