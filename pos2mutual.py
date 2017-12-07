@@ -117,7 +117,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         if mi>mutual_info[j]: mutual_info[j] = mi 
     return mutual_info
     
-def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000):
+def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=1000000):
     """Get mutual info from positions"""
     start, end = pos[0], pos[-1]+1
     sam = pysam.AlignmentFile(bam)
@@ -136,13 +136,11 @@ def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000)
         iread += 1
         if iread>=maxdepth:
             # count how many empty lines
-            empty = 0
-            while not calls[:,empty].sum():
-                empty += 1
+            empty = calls.sum(axis=0)==0#; print empty.sum()
+            iread -= empty.sum()
             # strip info about past reads and add new
-            logger(" Resizing array: %s empty rows\n"%empty)
-            calls = np.hstack((calls[:, empty:], np.zeros((len(pos), empty), dtype="int8", order='F')))
-            iread -= empty    
+            logger(" Resizing array: %s rows left\n"%iread)
+            calls = np.hstack((calls[:, empty], np.zeros((len(pos), maxdepth-iread), dtype="int8", order='F')))
         # report
         while a.pos>pos[0]:
             mutual_info = update_mutual_info(mutual_info, calls, 0, pos)
@@ -180,11 +178,10 @@ def line_generator(handle):
             if lines:
                 # need to combine
                 yield lines[0]
-            lines = []
+            pchrom, pp, lines = chrom, p, []
         lines.append(l)
     if lines:
         yield lines[0]
-
     
 def pos2mutual(fname, out=sys.stdout, verbose=1, log=sys.stderr):
     """Filter out positions with high mutual info"""\
