@@ -1,9 +1,14 @@
 CHANGELOG
 =========
 
+v1.20
+~~~~~
+- mutual SNP info
+
 v1.15
 ~~~~~
-- supporting two types of stranded protocols `-fr-secondstrand` and `-fr-firststrand` (for more info: http://salmon.readthedocs.io/en/latest/library_type.html)
+- auto-detection of stranded protocol (`-g/--gtf` needed)
+  - supporting two types of stranded protocols `-fr-secondstrand` and `-fr-firststrand` (for more info: http://salmon.readthedocs.io/en/latest/library_type.html)
 - both reads (read1 & read2) are processed for stranded libraries
   - this wasn't possible with samtools mpileup, so using pysam instead of `samtools mpileup` subprocess
 - using `pysam` required further optimisation for performance (5-6x faster, as fast as `samtools mpileup`)

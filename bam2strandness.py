@@ -11,7 +11,33 @@ import os, sys, pysam, random, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
-from REDiscover import is_antisense, is_qcfail
+#from REDiscover import is_antisense, is_qcfail
+
+def is_antisense(a):
+    """Return 1 if read pair is from antisense strand,
+    meaning first-in-pair or unpaired aligned to reverse strand, 
+    or second-in-pair aligned to forward strand.
+    """
+    # antisense if reverse
+    if a.is_reverse:
+        # and first in pair or unpaired
+        if a.is_read1 or not a.is_paired:
+            return 1
+    # or forward and second in pair
+    elif a.is_read2:
+        return 1
+    # otherwise sense
+    return 0
+        
+def is_duplicate(a, pa):
+    """Return True if read is duplicate"""
+    if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
+        return True
+
+def is_qcfail(a, mapq=15):
+    """Return True if alignment record fails quality checks"""
+    if a.mapq<mapq or a.flag&3840: # or is_heavily_clippped(a): 
+        return True
 
 def load_exons(fname, verbose=0):
     """Return regions from gtf/gff file"""
@@ -81,7 +107,7 @@ def worker(bam):
     reads, freq = bam2strandness(bam, regions, mapq, verbose)
     return reads, freq
 
-def process_bams(bams, gtf, mapq, subset, threads, verbose=0):
+def bam2strandness(bams, gtf, mapq, subset, threads, verbose=0):
     """Process all bam files and yield number of reads and strandness"""
     if verbose:
         sys.stderr.write("Loading regions\n")
@@ -134,7 +160,7 @@ def main():
         sys.stderr.write("Options: %s\n"%str(o))
 
     print "#fname\tno. of reads sampled\tfraction of reads from sense strand"
-    for data in process_bams(o.bam, o.gtf, o.mapq, o.subset, o.threads, o.verbose):
+    for data in bam2strandness(o.bam, o.gtf, o.mapq, o.subset, o.threads, o.verbose):
         print "\t".join(map(str, data))
 
 if __name__=='__main__': 

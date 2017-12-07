@@ -21,7 +21,7 @@ from multiprocessing import Pool
 import numpy as np
 from itertools import izip
 from FastaIndex import FastaIndex
-import bam2strandness
+from bam2strandness import bam2strandness, is_antisense, is_qcfail, is_duplicate
 
 alphabet = "ACGTid" # i=insertion d=deletion
 base2index = {b: i for i, b in enumerate(alphabet)}
@@ -51,7 +51,7 @@ def _skip(refi, readi, bases): return refi, readi, []
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
 
-def get_blocks(a, start, end, baseq, i, basesize, inblock=[0, 0, 0, 0, 1, 0], delblock=[0, 0, 0, 0, 0, 1]):
+def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], delblock=[0, 0, 0, 0, 0, 1]):
     """Return tuple of aligned position of query and reference. INDEL aware."""
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
@@ -75,28 +75,12 @@ def get_blocks(a, start, end, baseq, i, basesize, inblock=[0, 0, 0, 0, 1, 0], de
             yield prefi, block
         # insertion
         elif code==1:
-            yield prefi, [0]*i+inblock
+            yield prefi, [0]*i+insblock
         # deletion
         elif code==2:
             yield prefi, [0]*i+delblock
 
-def is_antisense(a):
-    """Return 1 if read pair is from antisense strand,
-    meaning first-in-pair or unpaired aligned to reverse strand, 
-    or second-in-pair aligned to forward strand.
-    """
-    # antisense if reverse
-    if a.is_reverse:
-        # and first in pair or unpaired
-        if a.is_read1 or not a.is_paired:
-            return 1
-    # or forward and second in pair
-    elif a.is_read2:
-        return 1
-    # otherwise sense
-    return 0
-        
-def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, offset=33, sfrac=0.1, window=10):
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
@@ -221,16 +205,6 @@ def worker(position):
     global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, advancedFiltering, verbose
     return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, advancedFiltering, verbose)
     
-def is_duplicate(a, pa):
-    """Return True if read is duplicate"""
-    if pa and a.pos==pa.pos and a.flag==pa.flag and a.cigarstring==pa.cigarstring and a.isize==pa.isize and a.seq==pa.seq:
-        return True
-
-def is_qcfail(a, mapq=15):
-    """Return True if alignment record fails quality checks"""
-    if a.mapq<mapq or a.flag&3840: # or is_heavily_clippped(a): 
-        return True
-    
 def worker_coverage(args):
     """return coverage"""
     bam, ref, mapq = args
@@ -339,7 +313,7 @@ def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66
     strands = []
     skipUnstranded = False
     toSkip = set()
-    for bam, reads, strandness in bam2strandness.process_bams(rna, gtf, mapq, subset, threads, verbose):
+    for bam, reads, strandness in bam2strandness(rna, gtf, mapq, subset, threads, verbose):
         strand = ""
         if strandness>=limit:
             strand = "secondstrand"
@@ -395,7 +369,7 @@ def main():
                                       formatter_class=argparse.RawTextHelpFormatter)
     
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.2a')
+    parser.add_argument('--version', action='version', version='1.20a')
     parser.add_argument("-o", "--out", required=1, help="output file")
     parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
     parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
@@ -405,24 +379,20 @@ def main():
     refpar.add_argument("-d", "--dna", nargs="*", default = [], help="input DNA-Seq BAM file(s)")
     refpar.add_argument("-f", "--fasta", default='', help="reference FASTA file")
     parser.add_argument("-r", "--rna", nargs="+", help="input RNA-Seq BAM file(s)")
+    
     strand = parser.add_mutually_exclusive_group()
     strand.add_argument("-g", "--gtf", default="", help="GTF/GFF for auto-detection of strandness")
-    strand.add_argument("-u", "--unstranded", action="store_true",
-                        help="unstranded RNAseq libraries")
+    strand.add_argument("-u", "--unstranded", action="store_true", help="unstranded RNAseq libraries")
     strand.add_argument("-s", "--stranded", "-fr-secondstrand", action="store_true", 
                         help="stranded RNAseq libraries ie. Illumina or Standard Solid")
     strand.add_argument("-fr-firststrand", default=False, action="store_true", 
                         help="stranded RNAseq libraries ie. dUTP, NSR, NNSR")
     
     parser.add_argument("-b", "--regions", "--bed", help="BED file with regions to genotype")
-    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse only some chromosomes [all]")
-
-    parser.add_argument("--minDepth", default=5,  type=int,
-                        help="minimal depth of coverage [%(default)s]")
-    parser.add_argument("--minDNAfreq",  default=0.99, type=float,
-                        help="min frequency for DNA base [%(default)s]")
-    parser.add_argument("--minAltfreq",  default=0.01, type=float,
-                        help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-c", "--chrs", nargs="*", default=[], help="analyse selected chromosomes [all]")
+    parser.add_argument("--minDepth", default=5, type=int,  help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("--minDNAfreq", default=0.99, type=float, help="min frequency for DNA base [%(default)s]")
+    parser.add_argument("--minAltfreq", default=0.01, type=float, help="min frequency for RNA editing base [%(default)s]")
     parser.add_argument("-m", "--maxStrandBias", default=0.1, type=float, help="max allowed strand bias [%(default)s]")
     
     # get enrichment parameters
