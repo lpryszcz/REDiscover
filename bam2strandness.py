@@ -104,7 +104,7 @@ def init_args(*args):
     
 def worker(bam):       
     global regions, mapq, verbose
-    reads, freq = bam2strandness(bam, regions, mapq, verbose)
+    reads, freq = get_strandness(bam, regions, mapq, verbose)
     return reads, freq
 
 def bam2strandness(bams, gtf, mapq, subset, threads, verbose=0):
