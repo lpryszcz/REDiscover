@@ -59,7 +59,7 @@ def load_exons(fname, verbose=0):
         regions.append((ref, start, end, strand))
     return regions
 
-def bam2strandness(bam, regions, mapq, verbose):
+def get_strandness(bam, regions, mapq, verbose):
     """Calculate strandness"""
     strandness = [0, 0]
     outfn = bam+".strand"
@@ -127,7 +127,7 @@ def bam2strandness(bams, gtf, mapq, subset, threads, verbose=0):
         sys.stderr.write("Parsing bam file(s)...\n")
     if threads<2: # this is useful for debugging
         for bam in bams:
-            reads, freq = bam2strandness(bam, regions, mapq, verbose)
+            reads, freq = get_strandness(bam, regions, mapq, verbose)
             yield bam, reads, freq
     else:
         initargs = (regions, mapq, verbose)
