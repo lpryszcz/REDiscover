@@ -19,12 +19,16 @@ from multiprocessing import Pool
 import numpy as np
 from REDiscover import logger, alphabet, base2index, code2function, get_consecutive, is_qcfail, is_duplicate
 
-def header2bams(handle):
+def header2bams(handle, out=None):
     """Retrieve bam fnames and strandness"""
     header = []
     for l in handle:
         if not l.startswith('##'):
+            if out:
+                out.write("%s\tmutual information\t%s"%('\t'.join(l.split('\t')[:3]), '\t'.join(l.split('\t')[3:])))
             break
+        if out:
+            out.write(l)
         header.append(l[3:-1])
     return header[1].split(), header[2].split()  
 
@@ -117,7 +121,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         if mi>mutual_info[j]: mutual_info[j] = mi 
     return mutual_info
     
-def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000):
+def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfree=100000):
     """Get mutual info from positions"""
     start, end = pos[0], pos[-1]+1
     sam = pysam.AlignmentFile(bam)
@@ -136,12 +140,17 @@ def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000)
         iread += 1
         if iread>=maxdepth:
             # count how many empty lines
-            empty = calls.sum(axis=0)==0#; print empty.sum()
-            iread -= empty.sum()
+            notempty = calls.sum(axis=0)>0
+            iread = notempty.sum()
+            # just in case no empty; remove 10% of first reads
+            if iread+minfree > maxdepth:
+                iread -= minfree
+                calls = calls[:, minfree:]                
+            else:
+                calls = calls[:, notempty]
             # strip info about past reads and add new
-            logger(" Resizing array: %s rows left"%iread)
-            calls = calls[:, empty]
-            calls = np.hstack((calls, np.zeros((len(pos), empty.sum()), dtype="int8", order='F')))
+            logger("  %s:%s-%s: resizing array: %s rows left"%(ref, start, end, iread))
+            calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype="int8", order='F')))#; print calls.shape
         # report
         while a.pos>pos[0]:
             mutual_info = update_mutual_info(mutual_info, calls, 0, pos)
@@ -156,7 +165,32 @@ def bam2mutual_info(bam, stranded, ref, pos, mapq=15, baseq=20, maxdepth=100000)
     for i in range(calls.shape[0]):
         mutual_info = update_mutual_info(mutual_info, calls, i, pos)
         yield mutual_info[i]
-    
+
+def combine_lines(lines):
+    """Combine genotypes for the same position. Handle strands separately."""
+    if len(lines)<2:
+        return lines
+    strand2snps = {}
+    for l in lines:
+        ldata = l[:-1].split("\t")#; print ldata
+        snp = ldata[2]
+        strand = snp[-1]
+        # store new snp
+        if strand not in strand2snps:
+            strand2snps[strand] = ldata[:2] + [snp[:-1]] + ldata[3:]
+        else:
+            # add alt allel
+            strand2snps[strand][2] += snp[-2]
+            # add freq
+            for i in range(4, len(ldata), 2):
+                strand2snps[strand][i] += ";%s"%ldata[i]
+    # combine snp info
+    lines = []        
+    for strand, l in strand2snps.iteritems():
+        l[2] += strand
+        lines.append("\t".join(l)+"\n")
+    return lines
+        
 def line_generator(handle):
     """Report lines"""
     pchrom = pp = ''
@@ -165,56 +199,46 @@ def line_generator(handle):
         if l.startswith('#'):
             continue
         # get chrom and pos
-        chrom, p = l[:-1].split()[:2]
+        chrom, p = l[:-1].split("\t")[:2]
         p = int(p)-1 # 1-off to 0-off
         # report    
         if chrom != pchrom or p!=pp:
             if lines:
-                # need to combine
-                yield lines[0]
+                yield combine_lines(lines)
             pchrom, pp, lines = chrom, p, []
         lines.append(l)
     if lines:
-        yield lines[0]
+        yield combine_lines(lines)
     
 def worker(data):
     # ignore all warnings
     np.seterr(all='ignore')
     bams, strands, ref, pos = data
     logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))    
-    #parsers = [bam2mutual_info(bam, strand, ref, pos) for bam, strand in zip(bams, strands)]
-    data = [] #d for d in zip(parsers)]
-    for bam, strand in zip(bams, strands):
-        data.append([d for d in bam2mutual_info(bam, strand, ref, pos)])
-    return data
+    return [[d for d in bam2mutual_info(bam, strand, ref, pos)] for bam, strand in zip(bams, strands)]
 
 def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
-    """Filter out positions with high mutual info"""\
+    """Filter out positions with high mutual info"""
+    if type(out) is str:
+        out = open(out, "w")
+    if out.name.endswith(".gz"):
+        out = gzip.open(out.name, "w")
+
     # parse header 
     handle = gzip.open(fname)
     handle2 = gzip.open(fname)
-    bams, strands = header2bams(handle)
-    # process
-    logger("Processing chromosomes...")
-    """
-    for ref, pos in chr2pos(handle, out):
-        logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
-        #if ref!="tRNA.Gly.GCC.Bacillus_subtilis.prokaryotic_cytosol": continue
-        parsers = [bam2mutual_info(bam, strand, ref, pos) for bam, strand in zip(bams, strands)]        
-        for i, data in enumerate(izip(line_generator(handle2), *parsers)):
-            l = data[0]
-            mi = np.array(data[1:])
-            #print "%s:%s\t%.3f\t%s"%(ref, pos[i]+1, mi[mi>0].mean() if mi.sum() else 0, str(mi))#) #, mi[mi>0]
-            out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi[mi>0].mean() if mi.sum() else 0, "\t".join(l.split("\t")[3:])))
-    """        
+    bams, strands = header2bams(handle, out)
     # process
     p = Pool(threads)
-    for parsers in p.imap(worker, [(bams, strands, ref, pos) for ref, pos in chr2pos(handle, out)]):
+    logger("Processing chromosomes...")
+    for parsers in p.imap(worker, [(bams, strands, ref, pos) for ref, pos in chr2pos(handle)]):
         for i, data in enumerate(izip(line_generator(handle2), *parsers)):
-            l = data[0]
+            lines = data[0]
             mi = np.array(data[1:])
-            out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi[mi>0].mean() if mi.sum() else 0, "\t".join(l.split("\t")[3:])))
-    #"""    
+            for l in lines:
+                out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi[mi>0].mean() if mi.sum() else 0, "\t".join(l.split("\t")[3:])))
+    out.close()
+            
 def main():
     import argparse
     usage  = "%(prog)s [options]" 
