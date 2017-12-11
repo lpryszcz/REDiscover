@@ -52,8 +52,8 @@ def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], d
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
-        refi, readi, data = code2function[code](refi, readi, bases)
-        if refi<start:
+        refi, readi, data = code2function[code](refi, readi, bases)#; print refi, readi, data
+        if refi<=start:
             continue
         # typical alignment part
         if data:
@@ -114,6 +114,7 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
         # add alignment blocks
         for refi, block in get_blocks(a, start, end, baseq, i, basesize):
             s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
+            #if len(block)<30: print ref, start, end, s, e, block
             calls[s:e] += block
             
     calls = calls.reshape((end-start+1, strandsNo, len(alphabet)))            
@@ -291,7 +292,7 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     i = 0
     # this is useful for debugging 
     if threads<2: 
-        #regions = list(regions)[2:]
+        regions = list(regions); print regions
         for i, region in enumerate(regions, 1):
             parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
                                   stranded, mapq, bcq, maxStrandBias, verbose)
