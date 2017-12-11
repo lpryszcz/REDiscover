@@ -56,15 +56,15 @@ def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], d
         if refi<=start:
             continue
         # typical alignment part
+        if prefi<start:
+            bases -= start-prefi
+            preadi += start-prefi
+            prefi = start
+        if refi>end:
+            bases -= refi-end
+        if bases<1:
+            break
         if data:
-            if prefi<start:
-                bases -= start-prefi
-                preadi += start-prefi
-                prefi = start
-            if refi>end:
-                bases -= refi-end
-            if bases<1:
-                break
             block = [0]*basesize*bases 
             for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
                 if q<baseq or b not in base2index:
