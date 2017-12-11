@@ -53,8 +53,10 @@ def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], d
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
         refi, readi, data = code2function[code](refi, readi, bases)
+        if refi<start:
+            continue
         # typical alignment part
-        if data and refi>start:
+        if data:
             if prefi<start:
                 bases -= start-prefi
                 preadi += start-prefi
@@ -71,10 +73,10 @@ def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], d
             yield prefi, block
         # insertion
         elif code==1:
-            yield prefi, [0]*i+insblock
+            yield prefi, [0]*i + insblock + [0]*(len(alphabet)-i)
         # deletion
         elif code==2:
-            yield prefi, [0]*i+delblock
+            yield prefi, [0]*i + delblock + [0]*(len(alphabet)-i)
 
 def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
     """Return 3D array of basecalls from BAM file, as follows:
@@ -253,8 +255,8 @@ def load_bed(fname):
         for l in open(fname):
             if l.startswith('#') or not l[:-1]:
                 continue
-            ldata = l[:-1].replace(',','').split('\t')
-            if len(ldata) == 3:
+            ldata = l[:-1].replace(',','').split('\t')#; print ldata
+            if len(ldata) >= 3:
                 ref, start, end = ldata
             else:
                 ref, se = ldata[0].split(':')
