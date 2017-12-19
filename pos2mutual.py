@@ -54,9 +54,9 @@ def chr2pos(handle, out=sys.stdout, window=10000):
         for pos in get_consecutive(pos, window):
             yield pchrom, list(pos)
 
-def get_pos2base(a, start, end, baseq, pos2idx, insint=5, delint=6):
-    """Return dictionary of position and corresponding base. Include DEL but ignore INS."""
-    pos2base = {}
+def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, insint=5, delint=6):
+    """Store calls from individual reads. Include DEL but ignore INS."""
+    stored = False
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
@@ -74,11 +74,14 @@ def get_pos2base(a, start, end, baseq, pos2idx, insint=5, delint=6):
             for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases]), prefi):
                 if ii not in pos2idx or q<baseq or b not in base2index:
                     continue
-                pos2base[ii] = base2index[b]+1
+                calls[pos2idx[ii], iread] = base2index[b]+1
+                stored = True
         # deletion
         elif code==2 and prefi in pos2idx:
-            pos2base[prefi] = delint
-    return pos2base
+            calls[pos2idx[prefi], iread] = delint
+    if stored:
+        iread += 1
+    return iread
 
 def _match_bases(arr):
     """Return alphabet fitted between both positions"""
@@ -125,7 +128,7 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfre
     """Get mutual info from positions"""
     start, end = pos[0], pos[-1]+1
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
-    calls = np.zeros((len(pos), maxdepth), dtype="int8", order='F')
+    calls = np.zeros((len(pos), maxdepth), dtype="int8", order='C')
     posset = set(pos)
     pos2idx = {p: idx for idx, p in enumerate(pos)}
     mutual_info = np.zeros(len(pos))
@@ -145,11 +148,9 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfre
                 else:
                     ppos, cov = a.pos, 0
                 pa = a
-                pos2base = get_pos2base(a, start, end, baseq, pos2idx)
-                if not pos2base: 
-                    continue
+                # store calls and count stored reads
+                iread = store_pos2base(a, start, end, baseq, pos2idx, calls, iread)
                 # make sure not too many reads
-                iread += 1
                 if iread>=maxdepth:
                     # count how many empty lines
                     notempty = calls[p:].sum(axis=0)>0
@@ -162,10 +163,8 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfre
                         calls = calls[:, notempty]
                     # strip info about past reads and add new
                     logger("  %s:%s-%s: resizing array: %s rows left"%(ref, start, end, iread))
-                    calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype="int8", order='F')))#; print calls.shape
-                # store calls
-                for _p, _b in pos2base.iteritems():
-                    calls[pos2idx[_p]][iread] = _b 
+                    calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype="int8", order='C')))#; print calls.shape
+
                 if a.pos>pos[p]:
                     break
         # calculate mutual info
