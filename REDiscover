@@ -41,9 +41,9 @@ P 6 padding (silent deletion from padded reference) no no
 X 8 sequence mismatch yes yes
     """
 def _match(refi, readi, bases): return refi+bases, readi+bases, True
-def _insertion(refi, readi, bases): return refi, readi+bases, []
-def _deletion(refi, readi, bases): return refi+bases, readi, []
-def _skip(refi, readi, bases): return refi, readi, []
+def _insertion(refi, readi, bases): return refi, readi+bases, False
+def _deletion(refi, readi, bases): return refi+bases, readi, False
+def _skip(refi, readi, bases): return refi, readi, False
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
 

@@ -121,7 +121,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         if mi>mutual_info[j]: mutual_info[j] = mi 
     return mutual_info
 
-def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=10000000, minfree=1000000, maxcov=600):
+def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfree=100000, maxcov=600):
     """Get mutual info from positions"""
     start, end = pos[0], pos[-1]+1
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
