@@ -47,8 +47,8 @@ def _skip(refi, readi, bases): return refi, readi, False
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
 
-def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], delblock=[0, 0, 0, 0, 0, 1]):
-    """Return tuple of aligned position of query and reference. INDEL aware."""
+def store_blocks(a, start, end, baseq, i, calls):
+    """Store base calls from aligned blocks. INDEL aware."""
     readi, refi = 0, a.pos
     for ci, (code, bases) in enumerate(a.cigar):
         prefi, preadi = refi, readi
@@ -66,32 +66,27 @@ def get_blocks(a, start, end, baseq, i, basesize, insblock=[0, 0, 0, 0, 1, 0], d
                 bases -= refi-end
             if bases<1:
                 break
-            block = [0]*basesize*bases 
             for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases])):
-                if q<baseq or b not in base2index:
-                    continue
-                block[ii*basesize+base2index[b]+i] += 1
-            yield prefi, block
+                if q>=baseq and b in base2index:
+                    calls[prefi-start+ii, i, base2index[b]] += 1
         elif start<prefi<end:
             # insertion
             if code==1:
-                yield prefi, [0]*i + insblock + [0]*(len(alphabet)-i)
+                calls[prefi-start, i, 4] += 1
             # deletion
             elif code==2:
-                yield prefi, [0]*i + delblock + [0]*(len(alphabet)-i)
+                calls[prefi-start, i, 5] += 1
+    return calls
 
 def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
-    - 3D base counts for ACGT
+    - 3D base counts for ACGTid
     """
     sam = pysam.AlignmentFile(bam)
-    # ACGT x2 for each strand
-    strandsNo = 2
-    basesize = strandsNo*len(alphabet)
-    n =  basesize * (end-start+1)
-    calls = np.zeros(n, dtype="int64") # for compatibility with list
+    # position, strand, ACGTid
+    calls = np.zeros((end-start+1, 2, len(alphabet)), dtype="int64")
     # stop if ref not in sam file
     if ref not in sam.references:
         if ref.startswith('chr') and ref[3:] in sam.references:
@@ -99,29 +94,24 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
         elif 'chr%s'%ref in sam.references:
             ref = 'chr%s'%ref
         else:
-            return calls.reshape((end-start+1, strandsNo, len(alphabet)))
+            return calls
     pa = None  
     for a in sam.fetch(ref, start, end):
         if is_qcfail(a, mapq) or is_duplicate(a, pa):
             continue
         pa = a
         # get transcript strand
-        i = 0 # for +/for i == 0; for -/rev i==len(alphabet)+1
+        i = 0 # for +/for i == 0; for -/rev i==1
         if stranded=="firststrand": 
             if not is_antisense(a):
-                i = len(alphabet)
+                i = 1
         # unstranded or secondstrand
         elif is_antisense(a):
-            i = len(alphabet)
-        # add alignment blocks
-        for refi, block in get_blocks(a, start, end, baseq, i, basesize):
-            s, e = basesize*(refi-start), basesize*(refi-start)+len(block)
-            #if len(block)<30: print ref, start, end, s, e, block
-            calls[s:e] += block
-            
-    calls = calls.reshape((end-start+1, strandsNo, len(alphabet)))            
+            i = 1
+        # store alignment blocks
+        calls = store_blocks(a, start, end, baseq, i, calls)
     return calls
-
+    
 def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded, bam2calls):
     """Combine basecalls from several files""" 
     parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams) 

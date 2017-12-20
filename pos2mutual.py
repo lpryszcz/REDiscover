@@ -71,11 +71,17 @@ def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, insint=5, delint
                 bases -= refi-end
             if bases<1:
                 break
+            _data = [base2index[b]+1 if q>=baseq and b in base2index else 0
+                     for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases]), prefi)
+                     if ii in pos2idx]
+            idx = 0
+            calls[prefi:len(_data), iread] = _data
+            """
             for ii, (b, q) in enumerate(zip(a.seq[preadi:preadi+bases], a.query_qualities[preadi:preadi+bases]), prefi):
                 if ii not in pos2idx or q<baseq or b not in base2index:
                     continue
                 calls[pos2idx[ii], iread] = base2index[b]+1
-                stored = True
+                stored = True"""
         # deletion
         elif code==2 and prefi in pos2idx:
             calls[pos2idx[prefi], iread] = delint
@@ -100,6 +106,7 @@ def _match_bases(arr):
         
 def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
     """Calculate mutual information between given position and all other positions"""
+    #return mutual_info
     # process only positions having at least minCommonReads
     for j, in np.argwhere(np.sum(calls[i+1:,calls[i]>0]>0, axis=1)>=minCommonReads)+i+1:
         arr = calls[[i,j]][:, np.all(calls[[i,j]], axis=0)]
@@ -124,6 +131,30 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         if mi>mutual_info[j]: mutual_info[j] = mi 
     return mutual_info
 
+def populate_reads(sams, reads, pos):
+    """Populate reads"""
+    # remove old reads
+    # add new
+    for sam in sams:
+        for a in sam:
+            if is_qcfail(a, mapq): # or is_duplicate(a, pa): 
+                continue
+            reads.append(a)
+            if a.pos>pos[0]:
+                break
+    return reads
+    
+def bams2mutual_info1(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfree=100000, maxcov=600):
+    """Get mutual info from positions"""
+    start, end = pos[0], pos[-1]+1
+    sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
+    calls = np.zeros((len(pos), maxdepth), dtype="int8", order='C')
+    posset = set(pos)
+    pos2idx = {p: idx for idx, p in enumerate(pos)}
+    mutual_info = np.zeros(len(pos))
+    iread = p = stops = 0
+    return mutual_info
+    
 def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxdepth=1000000, minfree=100000, maxcov=600):
     """Get mutual info from positions"""
     start, end = pos[0], pos[-1]+1
