@@ -82,19 +82,38 @@ def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, insint=5, delint
         iread += 1
     return iread, calls
 
-def _match_bases(arr):
+def _match_bases0(arr):
     """Return alphabet fitted between both positions"""
     d, dvals = {}, set()
     c = Counter(tuple(arr[:, i]) for i in xrange(arr.shape[1]))
     for (a, b), _c in c.most_common():
-        if b not in d and a not in dvals:
-            if not d:
-                arr[1][arr[1]==b], a0 = -1, a
-            else:
-                arr[1][arr[1]==b] = a
-            d[b] = a
-            dvals.add(a)
+        if not d:
+            arr[1][arr[1]==b], a0 = -1, a
+        # skip stored match
+        elif b in d or a in dvals:
+            arr[1][arr[1]==b] = a
+        d[b] = a
+        dvals.add(a)
     arr[1][arr[1]==-1] = a0
+    return arr
+    
+def _match_bases(arr, verbose=0):
+    """Return alphabet fitted between both positions"""
+    b2a, a2b, bset = {}, {}, set()
+    c = Counter(tuple(arr[:, i]) for i in xrange(arr.shape[1]))
+    if verbose: print c.most_common()
+    for (a, b), _c in c.most_common():
+        if b in b2a or a in a2b:
+            continue
+        b2a[b] = a
+        a2b[a] = b
+        arr[1][arr[1]==b] = -a
+        bset.add(b)
+    # change missing b
+    for b in filter(lambda x: x not in b2a, bset):
+        arr[1][arr[1]==b] = 4+b
+    # * -1
+    arr[1] *= -1
     return arr
         
 def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
@@ -114,25 +133,32 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
         # subsample so alt base is as freq as major allele
         altc = c.most_common(2)[1][1]
         arr = np.delete(arr, np.argwhere(arr[ii]==c.most_common(1)[0][0])[altc:].T[0], 1)
+        arr0 = np.copy(arr)
         # calculate hamming distance between calls & get corresponding bases - hth        
         hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. 
         # store mutual information
         #print arr.shape[1], arr
         mi = 1 - 1.* hammingdist / arr.shape[1]#; print pos[i], pos[j], hammingdist, mi, c.most_common()
         if mi>mutual_info[i]: mutual_info[i] = mi 
-        if mi>mutual_info[j]: mutual_info[j] = mi 
+        if mi>mutual_info[j]: mutual_info[j] = mi
+        if mi>.9:
+            if 263<pos[i]<266 or 263<pos[j]<266:
+                print pos[i], pos[j], mi, c.most_common(4)
+                print arr.shape, arr, Counter(arr[0]).most_common(4), Counter(arr[1]).most_common(4)
+                print Counter(arr0[0]).most_common(4), Counter(arr0[1]).most_common(4), _match_bases(arr0, 1)
     return mutual_info
 
 def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8", order="C"):
     """Get mutual info from positions"""
-    maxdepth = 2*maxcov*len(bams)
+    maxdepth = maxcov*(len(bams)+1)
     minfree = maxdepth/10
+    calls = np.zeros((len(pos), maxdepth), dtype=dtype, order=order)
+    mutual_info = np.zeros(len(pos))
+    if len(pos)<2: return mutual_info
     start, end = pos[0], pos[-1]+1
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
-    calls = np.zeros((len(pos), maxdepth), dtype=dtype, order=order)
     posset = set(pos)
     pos2idx = {p: idx for idx, p in enumerate(pos)}
-    mutual_info = np.zeros(len(pos))
     iread = p = stops = 0
     while True:
         pa = 0
@@ -142,7 +168,7 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
                 if a.pos>pos[p]:
                     break
                 # check cov
-                if cov>maxcov or is_qcfail(a, mapq): # or is_duplicate(a, pa): 
+                if cov>maxcov or is_qcfail(a, mapq) or is_duplicate(a, pa): 
                     continue
                 cov += 1
                 pa = a
@@ -160,18 +186,19 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
                     else:
                         calls = calls[:, notempty]
                     # strip info about past reads and add new
-                    #logger("  %s:%s-%s: resizing array: %s rows left"%(ref, start, end, iread))
-                    calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype=dtype, order=order)))#; print calls.shape
+                    calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype=dtype, order=order)))
                 
         # calculate mutual info
         while a.pos>pos[p]:
-            mutual_info = update_mutual_info(mutual_info, calls, p, pos)#; print bam, ref, pos[p], mutual_info[p]
+            mutual_info = update_mutual_info(mutual_info, calls, p, pos)
+            #if 263<pos[p]<266: print ref, pos[p], mutual_info[p]
             p += 1
         if not pa:
             break
     # calculate mutual info
     for p in range(p, len(mutual_info)):
         mutual_info = update_mutual_info(mutual_info, calls, p, pos)
+        #if 263<pos[p]<266: print ref, pos[p], mutual_info[p]
     return mutual_info
     
 def combine_lines(lines):
