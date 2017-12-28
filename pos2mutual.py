@@ -2,7 +2,10 @@
 desc="""Calculate mutual information between likely edited sites (REDiscover output). 
 
 TBA:
-- utilise PE info
+- still having problem if there is low freq mis-alignment and true modif
+ie. rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:272 A>CG. C is mis-alignment, but G is true editing.
+- modifications with RT signature up-/down-stream
+ie. K0 P-1 rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:745     G>ACTd. 0.607   743     0.017;0.020;0.074;0.061
 """
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
@@ -54,7 +57,7 @@ def chr2pos(handle, out=sys.stdout, window=10000):
         for pos in get_consecutive(pos, window):
             yield pchrom, list(pos)
 
-def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, insint=5, delint=6):
+def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, delint=6):
     """Store calls from individual reads. Include DEL but ignore INS."""
     stored = False
     readi, refi = 0, a.pos
@@ -79,73 +82,47 @@ def store_pos2base(a, start, end, baseq, pos2idx, calls, iread, insint=5, delint
         elif code==2 and prefi in pos2idx:
             calls[pos2idx[prefi], iread] = delint
     if stored:
-        iread += 1
-    return iread, calls
+        return 1
+    return 0
 
-def _match_bases0(arr):
-    """Return alphabet fitted between both positions"""
-    d, dvals = {}, set()
-    c = Counter(tuple(arr[:, i]) for i in xrange(arr.shape[1]))
-    for (a, b), _c in c.most_common():
-        if not d:
-            arr[1][arr[1]==b], a0 = -1, a
-        # skip stored match
-        elif b in d or a in dvals:
-            arr[1][arr[1]==b] = a
-        d[b] = a
-        dvals.add(a)
-    arr[1][arr[1]==-1] = a0
-    return arr
-    
 def _match_bases(arr, verbose=0):
     """Return alphabet fitted between both positions"""
-    b2a, a2b, bset = {}, {}, set()
+    b2a, a2b = {}, {}
+    arr[1] += -len(alphabet)
     c = Counter(tuple(arr[:, i]) for i in xrange(arr.shape[1]))
-    if verbose: print c.most_common()
     for (a, b), _c in c.most_common():
-        if b in b2a or a in a2b:
-            continue
-        b2a[b] = a
-        a2b[a] = b
-        arr[1][arr[1]==b] = -a
-        bset.add(b)
-    # change missing b
-    for b in filter(lambda x: x not in b2a, bset):
-        arr[1][arr[1]==b] = 4+b
-    # * -1
-    arr[1] *= -1
+        if b not in b2a and a not in a2b:
+            b2a[b] = a
+            a2b[a] = b
+            arr[1][arr[1]==b] = a
+    if verbose: return c.most_common()
     return arr
-        
-def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5):
+    
+def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5, posi=2203):
     """Calculate mutual information between given position and all other positions"""
-    #return mutual_info
     # process only positions having at least minCommonReads
     for j, in np.argwhere(np.sum(calls[i+1:,calls[i]>0]>0, axis=1)>=minCommonReads)+i+1:
         arr = calls[[i,j]][:, np.all(calls[[i,j]], axis=0)]
         # subsample for low freq sites
         altc = ii = 0
-        c, c1 = Counter(arr[0]), Counter(arr[1])#; print c
+        c, c1 = Counter(arr[0]), Counter(arr[1])
         if len(c)<2 or len(c1)>1 and c.most_common(2)[1][1]<c1.most_common(2)[1][1]:
-            c = c1
-            ii = 1
+            c, ii = c1, 1
         if len(c)<2 or c.most_common(2)[1][1]<minCommonReads:
             continue
         # subsample so alt base is as freq as major allele
         altc = c.most_common(2)[1][1]
-        arr = np.delete(arr, np.argwhere(arr[ii]==c.most_common(1)[0][0])[altc:].T[0], 1)
-        arr0 = np.copy(arr)
+        arr = np.delete(arr, np.argwhere(arr[ii]==c.most_common(1)[0][0])[altc:].T[0], 1)#; arr0 = np.copy(arr)
         # calculate hamming distance between calls & get corresponding bases - hth        
         hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. 
         # store mutual information
-        #print arr.shape[1], arr
-        mi = 1 - 1.* hammingdist / arr.shape[1]#; print pos[i], pos[j], hammingdist, mi, c.most_common()
+        mi = 1 - 1.* hammingdist / arr.shape[1]
         if mi>mutual_info[i]: mutual_info[i] = mi 
         if mi>mutual_info[j]: mutual_info[j] = mi
-        if mi>.9:
-            if 263<pos[i]<266 or 263<pos[j]<266:
-                print pos[i], pos[j], mi, c.most_common(4)
-                print arr.shape, arr, Counter(arr[0]).most_common(4), Counter(arr[1]).most_common(4)
-                print Counter(arr0[0]).most_common(4), Counter(arr0[1]).most_common(4), _match_bases(arr0, 1)
+        """
+        if pos[i]==posi-1 or pos[j]==posi-1:
+            print pos[i], pos[j], mi, Counter(arr0[0]).most_common(4), Counter(arr0[1]).most_common(4), _match_bases(arr0, 1)
+        #"""
     return mutual_info
 
 def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8", order="C"):
@@ -157,13 +134,14 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
     if len(pos)<2: return mutual_info
     start, end = pos[0], pos[-1]+1
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
+    pairs = [{} for bam in bams]
     posset = set(pos)
     pos2idx = {p: idx for idx, p in enumerate(pos)}
     iread = p = stops = 0
     while True:
         pa = 0
-        for sam in sams:
-            ppos = cov = 0
+        for sami, sam in enumerate(sams):
+            cov = 0
             for a in sam:
                 if a.pos>pos[p]:
                     break
@@ -173,7 +151,13 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
                 cov += 1
                 pa = a
                 # store calls and count stored reads
-                iread, calls = store_pos2base(a, start, end, baseq, pos2idx, calls, iread)
+                ## pair of previously stored read - store in row that pair occupies
+                if a.qname in pairs[sami]:
+                    store_pos2base(a, start, end, baseq, pos2idx, calls, pairs[sami][a.qname])
+                    ## new row for a pair
+                elif store_pos2base(a, start, end, baseq, pos2idx, calls, iread):
+                    pairs[sami][a.qname] = iread
+                    iread += 1
                 # make sure not too many reads
                 if iread>=maxdepth:
                     # count how many empty lines
@@ -185,22 +169,21 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
                         calls = calls[:, minfree:]                
                     else:
                         calls = calls[:, notempty]
-                    # strip info about past reads and add new
+                    # strip info about past reads and add new & reset paired-end info
                     calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype=dtype, order=order)))
+                    pairs = [{} for bam in bams]
                 
         # calculate mutual info
         while a.pos>pos[p]:
             mutual_info = update_mutual_info(mutual_info, calls, p, pos)
-            #if 263<pos[p]<266: print ref, pos[p], mutual_info[p]
             p += 1
         if not pa:
             break
     # calculate mutual info
     for p in range(p, len(mutual_info)):
         mutual_info = update_mutual_info(mutual_info, calls, p, pos)
-        #if 263<pos[p]<266: print ref, pos[p], mutual_info[p]
     return mutual_info
-    
+        
 def combine_lines(lines):
     """Combine genotypes for the same position. Handle strands separately."""
     if len(lines)<2:
@@ -220,7 +203,7 @@ def combine_lines(lines):
             for i in range(4, len(ldata), 2):
                 strand2snps[strand][i] += ";%s"%ldata[i]
     # combine snp info
-    lines = []        
+    lines = []
     for strand, l in strand2snps.iteritems():
         l[2] += strand
         lines.append("\t".join(l)+"\n")
@@ -249,7 +232,7 @@ def worker(data):
     # ignore all warnings
     np.seterr(all='ignore')
     bams, ref, pos = data
-    logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))    
+    logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
     return bams2mutual_info(bams, ref, pos)
 
 def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
@@ -261,7 +244,6 @@ def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
 
     # parse header 
     handle = gzip.open(fname)
-    handle2 = gzip.open(fname)
     bams, strands = header2bams(handle, out)
     # process
     if threads<2:
@@ -269,11 +251,15 @@ def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
         p = itertools
     else:
         p = Pool(threads)
+        
     logger("Processing chromosomes...")
-    for parsers in p.imap(worker, [(bams, ref, pos) for ref, pos in chr2pos(handle)]):
-        for lines, mi in izip(line_generator(handle2), parsers):
-            for l in lines:
-                out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi, "\t".join(l.split("\t")[3:])))
+    mutual_info = []    
+    for outdata in p.imap(worker, [(bams, ref, pos) for ref, pos in chr2pos(handle)]):
+        mutual_info += list(outdata)
+    #logger("Saving...")
+    for mi, lines in izip(mutual_info, line_generator(gzip.open(fname))):
+        for l in lines:
+            out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi, "\t".join(l.split("\t")[3:])))
     out.close()
             
 def main():

@@ -395,7 +395,7 @@ def main():
 
     parser.add_argument("-a", "--minAltReads",  default=3, type=int,
                         help="min number of reads with alternative base [%(default)s]")
-    parser.add_argument("-m", "--mimax", default=0.75, type=float, help="max allowed mutual information [%(default)s]")
+    parser.add_argument("-m", "--mimax", default=0.9, type=float, help="max allowed mutual information [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300],
                         type=int, help="number of samples [%(default)s]")
     parser.add_argument("--nofiltering", action="store_true", help="disable final filtering")    
