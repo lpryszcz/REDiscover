@@ -78,7 +78,11 @@ def store_blocks(a, start, end, baseq, i, calls):
                 calls[prefi-start, i, 5] += 1
     return calls
 
-def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
+def name2barcode(name):
+    """Return barcode from read name"""
+    return name.split(".")[0]
+    
+def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
@@ -95,9 +99,17 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20):
             ref = 'chr%s'%ref
         else:
             return calls
-    pa = None  
+    pa = None
+    barcodes = {}        
     for a in sam.fetch(ref, start, end):
-        if is_qcfail(a, mapq) or is_duplicate(a, pa):
+        if is_qcfail(a, mapq):
+            continue
+        # skip PCR duplicates from barcoded experiments
+        if barcoded:
+            if name2barcode(a.qname) in barcodes and barcodes[name2barcode(a.qname)]!=a.qname:
+                continue
+            barcodes[name2barcode(a.qname)] = a.qname
+        elif is_duplicate(a, pa):
             continue
         pa = a
         # get transcript strand
@@ -133,7 +145,7 @@ def fasta2calls(fastafn, ref, start, end, cov=100):
         yield call
             
 def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded,
-                 mapq, baseq, maxStrandBias, verbose):
+                 mapq, baseq, barcoded, verbose):
     """Return RNA editing positions"""
     # define strands - strands from individual files are handled by bam2calls
     if not stranded[0]:
@@ -150,7 +162,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
         refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, 0, bam2calls)
     else:
         refparser = fasta2calls(fasta, ref, start, end)
-    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq) for bam, _stranded in zip(bams, stranded)]
+    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq, barcoded) for bam, _stranded in zip(bams, stranded)]
     #for bam, _stranded in zip(bams, stranded): parsers.append(bam2calls(bam, _stranded, ref, start, end, mapq, baseq)) 
     for pos, calls in enumerate(izip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])#; print pos, calls
@@ -187,15 +199,11 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
     logger(" %s:%s-%s"%position)                     
     return "".join(info)
     
-def init_args(*args):
-    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose
-    fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose = args
-    
-def worker(position):
+def worker(data):
     # ignore all warnings
     np.seterr(all='ignore')        
-    global fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose
-    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, maxStrandBias, verbose)
+    position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose = data
+    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose)
     
 def worker_coverage(args):
     """return coverage"""
@@ -263,7 +271,7 @@ def load_bed(fname):
         yield ref, start, end
             
 def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
-                             stranded, mapq, bcq, threads, maxStrandBias, verbose, chrs):
+                             stranded, mapq, bcq, threads, barcoded, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
     header = "## %s\n"%" ".join(sys.argv)
@@ -280,22 +288,17 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
         regions = load_bed(regionsfn)
     else:
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
-
-    i = 0
-    # this is useful for debugging 
+      
     if threads<2: 
-        regions = list(regions); print regions
-        for i, region in enumerate(regions, 1):
-            parser = diff_editing(region, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
-                                  stranded, mapq, bcq, maxStrandBias, verbose)
-            for data in parser:
-                out.write(data)
+        import itertools
+        p = itertools
     else:
-        initargs = (fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, maxStrandBias, verbose)
-        p = Pool(threads, initializer=init_args, initargs=initargs)#, maxtasksperchild=20)
-        parser = p.imap(worker, regions) #_unordered , chunksize=10
-        for i, data in enumerate(parser, 1):
-            out.write(data)
+        p = Pool(threads)#, maxtasksperchild=20)
+        
+    i = 0
+    parser = p.imap(worker, ((pos, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, barcoded, verbose) for pos in regions)) #_unordered , chunksize=10
+    for i, data in enumerate(parser, 1):
+        out.write(data)
             
     logger("%s regions processed"%i)
     out.close()
@@ -385,17 +388,18 @@ def main():
     parser.add_argument("--minDepth", default=5, type=int,  help="minimal depth of coverage [%(default)s]")
     parser.add_argument("--minDNAfreq", default=0.99, type=float, help="min frequency for DNA base [%(default)s]")
     parser.add_argument("--minAltfreq", default=0.01, type=float, help="min frequency for RNA editing base [%(default)s]")
-    parser.add_argument("--maxStrandBias", default=0.1, type=float, help="max allowed strand bias [%(default)s]")
+    parser.add_argument("--barcoded", action="store_true", help="barcoded (UMI) samples")
     
     # get enrichment parameters
     parser.add_argument("--dbSNP", default=[], nargs="+", help="dbSNP file")    
     parser.add_argument("--dist", default=300, type=int, help="distance between SNPs in cluster [%(default)s]")
 
     parser.add_argument("--nomutual", action="store_true", help="disable mutual info calculation")    
+    parser.add_argument("-m", "--mimax", default=0.9, type=float, help="max allowed mutual information [%(default)s]")
+    parser.add_argument("--maxcov", default=600, type=int, help="max coverage per sample [%(default)s]")
 
     parser.add_argument("-a", "--minAltReads",  default=3, type=int,
                         help="min number of reads with alternative base [%(default)s]")
-    parser.add_argument("-m", "--mimax", default=0.9, type=float, help="max allowed mutual information [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300],
                         type=int, help="number of samples [%(default)s]")
     parser.add_argument("--nofiltering", action="store_true", help="disable final filtering")    
@@ -445,14 +449,9 @@ def main():
         else:
             o.stranded = [""]*len(o.rna)
 
-        # disable strandBias filter if stranded and single-end
-        if o.stranded[0] and is_any_lib_single(o.rna): 
-            logger("[WARNING] Stranded and single-end libraries present: disabled maxStrandBias!", 0)
-            o.maxStrandBias = 0
-
         # get differential editing
         get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
-                                 o.stranded, o.mapq, o.bcq, o.threads, o.maxStrandBias, o.verbose, o.chrs)
+                                 o.stranded, o.mapq, o.bcq, o.threads, o.barcoded, o.verbose, o.chrs)
 
     # mutual info
     outfn = o.out
@@ -463,7 +462,7 @@ def main():
             logger(" %s exists!"%outfn)
         else:
             import pos2mutual
-            pos2mutual.pos2mutual(o.out, outfn, o.threads, o.verbose)
+            pos2mutual.pos2mutual(o.out, outfn, o.threads, o.mapq, o.bcq, o.maxcov, o.verbose)
 
     if not o.nofiltering:
         logger("Filtering...")

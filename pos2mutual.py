@@ -231,11 +231,11 @@ def line_generator(handle):
 def worker(data):
     # ignore all warnings
     np.seterr(all='ignore')
-    bams, ref, pos = data
+    bams, ref, pos, mapq, bcq, maxcov = data
     logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
-    return bams2mutual_info(bams, ref, pos)
+    return bams2mutual_info(bams, ref, pos, mapq, bcq, maxcov)
 
-def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
+def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, verbose=1, log=sys.stderr):
     """Filter out positions with high mutual info"""
     if type(out) is str:
         out = open(out, "w")
@@ -254,7 +254,7 @@ def pos2mutual(fname, out=sys.stdout, threads=4, verbose=1, log=sys.stderr):
         
     logger("Processing chromosomes...")
     mutual_info = []    
-    for outdata in p.imap(worker, [(bams, ref, pos) for ref, pos in chr2pos(handle)]):
+    for outdata in p.imap(worker, [(bams, ref, pos, mapq, bcq, maxcov) for ref, pos in chr2pos(handle)]):
         mutual_info += list(outdata)
     #logger("Saving...")
     for mi, lines in izip(mutual_info, line_generator(gzip.open(fname))):
@@ -273,6 +273,9 @@ def main():
     parser.add_argument("-i", "--input", default='', help="REDiscover variation file")
     parser.add_argument("-o", "--out", default=sys.stdout, type=argparse.FileType("w"), help="output file")
     parser.add_argument("-t", "--threads", default=4, type=int, help="number of cores to use [%(default)s]")
+    parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
+    parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
+    parser.add_argument("--maxcov", default=600, type=int, help="max coverage per sample [%(default)s]")
 
     # print help if no parameters
     if len(sys.argv)==1:
@@ -282,7 +285,7 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
 
-    pos2mutual(o.input, o.out, o.threads, o.verbose)
+    pos2mutual(o.input, o.out, o.threads, o.mapq, o.bcq, o.maxcov, o.verbose)
     
 if __name__=='__main__': 
     t0 = datetime.now()

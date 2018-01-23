@@ -64,9 +64,9 @@ def modifications2rna(table, fnames, species):
         mods = []
         names = set()
         # define output files
-        outfn1, outfn2 = fn+".rna.fa", fn+".dna.fa"
-        print " %s --> %s & %s"%(fn, outfn1, outfn2)
-        with open(outfn1, "w") as out1, open(outfn2, "w") as out2:
+        outfn1, outfn2, outfn3 = fn+".rna.fa", fn+".dna.fa", fn+".mod.bed"
+        print " %s --> %s & %s & %s"%(fn, outfn1, outfn2, outfn3)
+        with open(outfn1, "w") as out1, open(outfn2, "w") as out2, open(outfn3, "w") as out3:
             for name, seq in fasta_parser(fn):
                 # skip if not given species
                 if species and species not in name:
@@ -88,6 +88,10 @@ def modifications2rna(table, fnames, species):
                     print ii, k, name; print seq1; print seq2#; print [mod2base[b] for b in seq]
                 out1.write(">%s\n%s\n"%(name, seq1))
                 out2.write(">%s\n%s\n"%(name, seq2))
+                # write bed
+                for i, b in enumerate(seq):
+                    if b not in 'ACGU' and b in mod2name:
+                        out3.write("%s\t%s\t%s\t%s\n"%(name, i, i+1, mod2name[b]))
         # report mod2count
         report_stats(fn, ii, mods, mod2name, species)
         II += ii
