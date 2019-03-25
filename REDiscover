@@ -109,8 +109,8 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False)
             if name2barcode(a.qname) in barcodes and barcodes[name2barcode(a.qname)]!=a.qname:
                 continue
             barcodes[name2barcode(a.qname)] = a.qname
-        elif is_duplicate(a, pa):
-            continue
+        #elif is_duplicate(a, pa):
+        #    continue
         pa = a
         # get transcript strand
         i = 0 # for +/for i == 0; for -/rev i==1
@@ -412,9 +412,13 @@ def main():
     o = parser.parse_args()
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
-     
+
+    # add extensions
     if not o.out.endswith('.gz'):
         o.out += ".gz"
+    # and create outdir if not exists
+    if os.path.dirname(o.out) and not os.path.isdir(os.path.dirname(o.out)):
+        os.makedirs(os.path.dirname(o.out))
         
     # calculate differential editing if file doesn't exist
     if os.path.isfile(o.out) and open(o.out).readline():

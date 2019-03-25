@@ -99,34 +99,57 @@ def _match_bases(arr, verbose=0):
     return arr
     
 def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5, posi=2203):
-    """Calculate mutual information between given position and all other positions"""
+    """Calculate mutual information between given position and all other positions
+    
+    Note, This can be phased all at once by change in read order and computing some similarity.
+    """
     # process only positions having at least minCommonReads
     for j, in np.argwhere(np.sum(calls[i+1:,calls[i]>0]>0, axis=1)>=minCommonReads)+i+1:
         arr = calls[[i,j]][:, np.all(calls[[i,j]], axis=0)]
         # subsample for low freq sites
         altc = ii = 0
         c, c1 = Counter(arr[0]), Counter(arr[1])
-        if len(c)<2 or len(c1)>1 and c.most_common(2)[1][1]<c1.most_common(2)[1][1]:
-            c, ii = c1, 1
-        if len(c)<2 or c.most_common(2)[1][1]<minCommonReads:
+        if len(c)<2 or len(c1)<2 or c.most_common(2)[1][1]<minCommonReads or \
+           c1.most_common(2)[1][1]<minCommonReads:
             continue
+        # match bases at both positions
+        _match_bases(arr)
         # subsample so alt base is as freq as major allele
-        altc = c.most_common(2)[1][1]
-        arr = np.delete(arr, np.argwhere(arr[ii]==c.most_common(1)[0][0])[altc:].T[0], 1)#; arr0 = np.copy(arr)
-        # calculate hamming distance between calls & get corresponding bases - hth        
-        hammingdist = (_match_bases(arr)[:, None] != arr).sum()/2. 
-        # store mutual information
-        mi = 1 - 1.* hammingdist / arr.shape[1]
+        ## get all mutual bases at two positions
+        c = Counter(izip(arr[0], arr[1]))
+        # count how many alternative bases
+        altc = arr.shape[1] - c.most_common(1)[0][1]
+        # get subset of major allele
+        arr = np.delete(arr, np.argwhere(np.all(arr==c.most_common(1)[0][0][0], 0))[altc:].T[0], 1)
+        # store mutual information - 0.5-1.0 instead of 0.5-1.0
+        #mi = 1 - 1.* np.sum(arr[0] != arr[1]) / arr.shape[1]
+        mi = 2*(0.5 - 1.* np.sum(arr[0] != arr[1]) / arr.shape[1])
+        #mutual_info[i].append(mi); mutual_info[j].append(mi)
         if mi>mutual_info[i]: mutual_info[i] = mi 
         if mi>mutual_info[j]: mutual_info[j] = mi
-        """
-        if pos[i]==posi-1 or pos[j]==posi-1:
-            print pos[i], pos[j], mi, Counter(arr0[0]).most_common(4), Counter(arr0[1]).most_common(4), _match_bases(arr0, 1)
-        #"""
     return mutual_info
 
+def clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order):
+    """Remove empty rows from calls to store new reads."""
+    if iread>=maxdepth:
+        logger("  cleaning cache (%s:%s)..."%(ref, pos[p]))
+        # count how many empty lines
+        notempty = calls[p:].sum(axis=0)>0
+        iread = notempty.sum()
+        # just in case no empty; remove 10% of first reads
+        if iread+minfree > maxdepth:
+            iread -= minfree
+            calls = calls[:, minfree:]                
+        else:
+            calls = calls[:, notempty]
+        # strip info about past reads and add new
+        calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype=dtype, order=order)))
+        pairs = [{} for bam in bams]
+    return calls, pairs, iread
+    
 def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8", order="C"):
     """Get mutual info from positions"""
+    logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
     maxdepth = maxcov*(len(bams)+1)
     minfree = maxdepth/10
     calls = np.zeros((len(pos), maxdepth), dtype=dtype, order=order)
@@ -137,46 +160,36 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
     pairs = [{} for bam in bams]
     posset = set(pos)
     pos2idx = {p: idx for idx, p in enumerate(pos)}
-    iread = p = stops = 0
+    iread = p = 0
     while True:
         pa = 0
         for sami, sam in enumerate(sams):
             cov = 0
             for a in sam:
+                pa = a
                 if a.pos>pos[p]:
                     break
                 # check cov
-                if cov>maxcov or is_qcfail(a, mapq) or is_duplicate(a, pa): 
+                if cov>maxcov or is_qcfail(a, mapq): # or is_duplicate(a, pa): 
                     continue
                 cov += 1
-                pa = a
                 # store calls and count stored reads
                 ## pair of previously stored read - store in row that pair occupies
                 if a.qname in pairs[sami]:
                     store_pos2base(a, start, end, baseq, pos2idx, calls, pairs[sami][a.qname])
-                    ## new row for a pair
+                ## new row for a pair
                 elif store_pos2base(a, start, end, baseq, pos2idx, calls, iread):
                     pairs[sami][a.qname] = iread
                     iread += 1
                 # make sure not too many reads
-                if iread>=maxdepth:
-                    # count how many empty lines
-                    notempty = calls[p:].sum(axis=0)>0
-                    iread = notempty.sum()
-                    # just in case no empty; remove 10% of first reads
-                    if iread+minfree > maxdepth:
-                        iread -= minfree
-                        calls = calls[:, minfree:]                
-                    else:
-                        calls = calls[:, notempty]
-                    # strip info about past reads and add new & reset paired-end info
-                    calls = np.hstack((calls, np.zeros((len(pos), maxdepth-iread), dtype=dtype, order=order)))
-                    pairs = [{} for bam in bams]
+                calls, pairs, iread = clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
                 
         # calculate mutual info
         while a.pos>pos[p]:
             mutual_info = update_mutual_info(mutual_info, calls, p, pos)
             p += 1
+        # make sure not too many reads
+        calls, pairs, iread = clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
         if not pa:
             break
     # calculate mutual info
@@ -228,12 +241,10 @@ def line_generator(handle):
     if lines:
         yield combine_lines(lines)
     
-def worker(data):
+def worker(args):
     # ignore all warnings
-    np.seterr(all='ignore')
-    bams, ref, pos, mapq, bcq, maxcov = data
-    logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
-    return bams2mutual_info(bams, ref, pos, mapq, bcq, maxcov)
+    #np.seterr(all='ignore')
+    return bams2mutual_info(*args) 
 
 def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, verbose=1, log=sys.stderr):
     """Filter out positions with high mutual info"""
