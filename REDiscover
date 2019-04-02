@@ -144,8 +144,8 @@ def fasta2calls(fastafn, ref, start, end, cov=100):
             call[base2index[b]] += cov
         yield call
             
-def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded,
-                 mapq, baseq, barcoded, verbose):
+def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, minAltReads,
+                 stranded, mapq, baseq, barcoded, verbose):
     """Return RNA editing positions"""
     # define strands - strands from individual files are handled by bam2calls
     if not stranded[0]:
@@ -187,7 +187,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
             # process alt bases
             for bi, base in enumerate(alphabet):
                 # skip reference and if less than 3 reads per allele
-                if bi==refi or bamcalls[:, si, bi].max()<3:
+                if bi==refi or bamcalls[:, si, bi].max()<minAltReads:
                     continue
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
@@ -196,14 +196,15 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, s
                     if text:
                          info.append(text)
     info.append(z.flush())
-    logger(" %s:%s-%s"%position)                     
+    logger(" %s:%s-%s"%position)
     return "".join(info)
     
-def worker(data):
+def worker(args):
     # ignore all warnings
     np.seterr(all='ignore')        
-    position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose = data
-    return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose)
+    #position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose = data
+    #return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose)
+    return diff_editing(*args)
     
 def worker_coverage(args):
     """return coverage"""
@@ -270,7 +271,7 @@ def load_bed(fname):
         start, end = map(int, (start, end))
         yield ref, start, end
             
-def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq,
+def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, minAltReads, 
                              stranded, mapq, bcq, threads, barcoded, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
@@ -296,7 +297,7 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
         p = Pool(threads)#, maxtasksperchild=20)
         
     i = 0
-    parser = p.imap(worker, ((pos, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, stranded, mapq, bcq, barcoded, verbose) for pos in regions)) #_unordered , chunksize=10
+    parser = p.imap(worker, ((pos, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, minAltReads, stranded, mapq, bcq, barcoded, verbose) for pos in regions)) #_unordered , chunksize=10
     for i, data in enumerate(parser, 1):
         out.write(data)
             
@@ -364,7 +365,7 @@ def main():
                                       formatter_class=argparse.RawTextHelpFormatter)
     
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose")    
-    parser.add_argument('--version', action='version', version='1.20a')
+    parser.add_argument('--version', action='version', version='1.30a')
     parser.add_argument("-o", "--out", required=1, help="output file")
     parser.add_argument("-q", "--mapq", default=3, type=int, help="mapping quality [%(default)s]")
     parser.add_argument("-Q", "--bcq", default=20, type=int, help="basecall quality [%(default)s]")
@@ -388,6 +389,7 @@ def main():
     parser.add_argument("--minDepth", default=5, type=int,  help="minimal depth of coverage [%(default)s]")
     parser.add_argument("--minDNAfreq", default=0.99, type=float, help="min frequency for DNA base [%(default)s]")
     parser.add_argument("--minAltfreq", default=0.01, type=float, help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-a", "--minAltReads", default=3, type=int,  help="min number of reads with alternative allele [%(default)s]")
     parser.add_argument("--barcoded", action="store_true", help="barcoded (UMI) samples")
     
     # get enrichment parameters
@@ -397,9 +399,6 @@ def main():
     parser.add_argument("--nomutual", action="store_true", help="disable mutual info calculation")    
     parser.add_argument("-m", "--mimax", default=0.9, type=float, help="max allowed mutual information [%(default)s]")
     parser.add_argument("--maxcov", default=600, type=int, help="max coverage per sample [%(default)s]")
-
-    parser.add_argument("-a", "--minAltReads",  default=3, type=int,
-                        help="min number of reads with alternative base [%(default)s]")
     parser.add_argument("-n", "--minsamples", nargs="+", default=[1, 2, 3, 5, 10, 20, 30, 50, 100, 200, 300],
                         type=int, help="number of samples [%(default)s]")
     parser.add_argument("--nofiltering", action="store_true", help="disable final filtering")    
@@ -454,7 +453,7 @@ def main():
             o.stranded = [""]*len(o.rna)
 
         # get differential editing
-        get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq,
+        get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq, o.minAltReads, 
                                  o.stranded, o.mapq, o.bcq, o.threads, o.barcoded, o.verbose, o.chrs)
 
     # mutual info

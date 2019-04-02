@@ -93,7 +93,7 @@ def main():
         oline = "%s\t"*6
         for i, snp in enumerate(id2snp):
             lens = map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
-            print "%s\t"%snp + "\t".join(map(str, lens))
+            print "%s\t"%snp[:-1] + "\t".join(map(str, lens))
             
         outfn = "%s.violin_plot.%s"%(fn, o.ext)
         violin_plot(outfn, snps, names, id2snp)
