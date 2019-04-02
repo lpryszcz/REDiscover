@@ -185,6 +185,7 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, m
             if coverage.max() < minDepth:
                 continue
             # process alt bases
+            altbases = []
             for bi, base in enumerate(alphabet):
                 # skip reference and if less than 3 reads per allele
                 if bi==refi or bamcalls[:, si, bi].max()<minAltReads:
@@ -192,9 +193,13 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, m
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
                 if np.nanmax(freqs) >= minAltfreq:
-                    text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.5f"%d for d in zip(coverage, freqs)) + "\n")
-                    if text:
-                         info.append(text)
+                    #text = z.compress(posinfo%(ref, pos, refbase, alphabet[bi], strand) + "".join("\t%s\t%.5f"%d for d in zip(coverage, freqs)) + "\n")
+                    altbases.append(base)
+            if altbases:
+                text = z.compress(posinfo%(ref, pos, refbase, "".join(altbases), strand)+"\t"+\
+                                  "\t".join(",".join(map(str, bamcalls[i, si])) for i in range(bamcalls.shape[0]))+"\n")
+                if text:
+                     info.append(text)
     info.append(z.flush())
     logger(" %s:%s-%s"%position)
     return "".join(info)
@@ -202,8 +207,6 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, m
 def worker(args):
     # ignore all warnings
     np.seterr(all='ignore')        
-    #position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose = data
-    #return diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, stranded, mapq, baseq, barcoded, verbose)
     return diff_editing(*args)
     
 def worker_coverage(args):
@@ -250,6 +253,7 @@ def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], ver
                 yield ref, s, s+step
                 s += step
             yield ref, s, e
+    #p.terminate()
     
 def load_bed(fname):
     """Return regions from BED file"""
@@ -276,9 +280,11 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     """Get alternative base coverage and frequency for every bam file"""
     out = open(outfn, "w")
     header = "## %s\n"%" ".join(sys.argv)
+    header += "## DNA/RNA alphabet (T=T or U, i=insertion, d=deletion): %s\n"%alphabet
     header += "## %s\n" % "\t".join(rna)
     header += "## %s\n" % "\t".join(stranded)
-    header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\talt freq"%fn for fn in rna)
+    #header += "#chr\tpos\tvariation\t%s\n"%"\t".join("%s cov\talt freq"%fn for fn in rna)
+    header += "#chr\tpos\tvariation\t%s\n"%"\t".join(rna)
     # http://stackoverflow.com/a/22311297/632242
     z = zlib.compressobj(-1, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     header = z.compress(header) + z.flush()
