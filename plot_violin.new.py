@@ -34,7 +34,6 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
     """
     # process snps
     snps, names = [], []
-    #name2id = {}
     for i, l in enumerate(gzip.open(fname)): 
         ldata = l[:-1].split('\t')
         if l.startswith('#'):
@@ -45,6 +44,7 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
             continue
         # print info
         if log and not i%10000: log.write(" %s \r"%i)
+        #if i>20000: break    
         if l[-1]!='\n':
             log.write("[WARNING] Interrupting due to corrupted line: %s\n"%l)
             break    
@@ -57,15 +57,14 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
         refbase = snp[0]
         refbasei = base2index[refbase]
         snptmp = "%s>%s%s"%(refbase, '%s', snp[-1])
-        #if snp not in snp2id:
-        #   continue
+        # make sure chr name containcs chr
         if not chrom.startswith('chr'):
             chrom = "chr%s"%chrom
         # skip if present in dbSNP
         if dbSNP and chrom in dbSNP and int(pos) in dbSNP[chrom]:
             continue
         # unload base counts for pos # A,C,G,T,i,d 0,0,0,0,0,0     0,1,0,0,0,0
-        sampledata = np.array([map(int, sc.split(',')) for sc in ldata[3:]])#; print(refbase, refbasei, sampledata)
+        sampledata = np.array([map(int, sc.split(',')) for sc in ldata[3:]])
         for ii in range(len(names)):
             # check depth
             cov = sampledata[ii].sum()
@@ -165,11 +164,22 @@ def main():
     for fn in o.fnames:
         snps, names = load_snps(fn, snp2id, id2snp, o.eid)
         # report stats
-        out.write("## %s\n#snp\t%s\n"%(fn, "\t".join(names)))
+        out.write("## %s\n"%fn)
+        # print counts
+        out.write("#snp counts\t%s\n"%"\t".join(names))
         for i, snp in enumerate(id2snp):
             lens = map(len, snps[i]) #map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
             out.write("%s\t%s\n"%(snp[:-1], "\t".join(map(str, lens))))
-            
+        # print mean, median, stdev
+        out.write("#snp median\t%s\n"%"\t".join(names))
+        for i, snp in enumerate(id2snp):
+            out.write("%s\t%s\n"%(snp[:-1], "\t".join("%.5f"%m for m in map(np.median, snps[i]))))
+        # print mean +- stdev
+        out.write("#snp mean +- stdev\t%s\n"%"\t".join(names))
+        for i, snp in enumerate(id2snp):
+            means = map(np.mean, snps[i])
+            stdev = map(np.std, snps[i])
+            out.write("%s\t%s\n"%(snp[:-1], "\t".join("%.5f +-%.5f"%(m, s) for m, s in zip(means, stdev))))
         outfn = "%s.violin_plot.%s"%(fn, o.ext)
         violin_plot(outfn, snps, names, id2snp, o.xmax)
         sys.stderr.write("[INFO] Violin plot saved as: %s\n"%outfn)
