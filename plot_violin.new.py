@@ -73,9 +73,9 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
             for bi, b in enumerate(sampledata[ii]):
                 # skip reference or sites with too little alt reads
                 if bi==refbasei or b<minAltReads: continue
-                # check freq
+                # check freq & if snp is correct ie d>C+ isn't allowed
                 freq = 1.*b/cov
-                if freq<minFreq: continue
+                if freq<minFreq or snptmp%index2base[bi] not in snp2id: continue
                 # store
                 snps[snp2id[snptmp%index2base[bi]]][ii].append(freq)
 
