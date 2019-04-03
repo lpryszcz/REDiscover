@@ -45,7 +45,9 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
             continue
         # print info
         if log and not i%10000: log.write(" %s \r"%i)
-        #if i>20000: break   
+        if l[-1]!='\n':
+            log.write("[WARNING] Interrupting due to corrupted line: %s\n"%l)
+            break    
         # unload pos info
         chrom, pos, snp = ldata[:3]
         # unstranded
@@ -159,13 +161,13 @@ def main():
             id2snp.append(snp)
             
     # process input files
-    out = o.out
+    out, log = o.out, sys.stderr
     for fn in o.fnames:
         snps, names = load_snps(fn, snp2id, id2snp, o.eid)
         # report stats
         out.write("## %s\n#snp\t%s\n"%(fn, "\t".join(names)))
         for i, snp in enumerate(id2snp):
-            lens = map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
+            lens = map(len, snps[i]) #map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
             out.write("%s\t%s\n"%(snp[:-1], "\t".join(map(str, lens))))
             
         outfn = "%s.violin_plot.%s"%(fn, o.ext)
