@@ -182,7 +182,7 @@ def main():
             means = map(np.mean, snps[i])
             stdev = map(np.std, snps[i])
             out.write("%s\t%s\n"%(snp[:-1], "\t".join("%.5f +-%.5f"%(m, s) for m, s in zip(means, stdev))))
-        outfn = "%s.violin_plot.%sx.%s.%s_reads.%s"%(fn, o.minDepth, o.minAltFreq, o.minAltReads, o.ext)
+        outfn = "%s.violin_plot.%sx.%s.%s_reads.%s"%(fn, o.minDepth, o.minAltfreq, o.minAltReads, o.ext)
         violin_plot(outfn, snps, names, id2snp, o.xmax)
         sys.stderr.write("[INFO] Violin plot saved as: %s\n"%outfn)
 
