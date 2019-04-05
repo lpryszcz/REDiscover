@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-desc="""Generate violin plot from REDiscover.diff output.
+desc="""Generate violin plot from REDiscover output.
 
 TBA:
 - half-violin plot for sense/antisense? https://stackoverflow.com/questions/29776114/half-violin-plot
@@ -7,7 +7,7 @@ TBA:
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
 
-Fribourg, 14/08/2017
+Fribourg/Mizerow, 14/08/2017
 """
 
 import os, sys, gzip
@@ -17,7 +17,6 @@ from datetime import datetime
 import matplotlib
 matplotlib.use('Agg') # Force matplotlib to not use any Xwindows backend
 import matplotlib.pyplot as plt
-#from plot_hist import bases, base2rc
 
 bases = "ACGTid"
 base2index = {b: i for i, b in enumerate(bases)}
@@ -128,6 +127,9 @@ def main():
     parser.add_argument("-x", "--xmax", default=1.0, type=float, help="limit x axis [%(default)s]")
     parser.add_argument("--ext", default="png", choices=['png', 'svg', 'pdf', 'jpg'], 
                         help="figure extension [%(default)s]")
+    parser.add_argument("--minDepth", default=5, type=int,  help="minimal depth of coverage [%(default)s]")
+    parser.add_argument("--minAltfreq", default=0.01, type=float, help="min frequency for RNA editing base [%(default)s]")
+    parser.add_argument("-a", "--minAltReads", default=3, type=int,  help="min number of reads with alternative allele [%(default)s]")
     
     # print help if no parameters
     if len(sys.argv)==1:
@@ -171,16 +173,16 @@ def main():
             lens = map(len, snps[i]) #map(len, [filter(lambda x: 0.02<x<0.98, _snps) for _snps in snps[i]])
             out.write("%s\t%s\n"%(snp[:-1], "\t".join(map(str, lens))))
         # print mean, median, stdev
-        out.write("#snp median\t%s\n"%"\t".join(names))
+        out.write("\n#snp median\t%s\n"%"\t".join(names))
         for i, snp in enumerate(id2snp):
             out.write("%s\t%s\n"%(snp[:-1], "\t".join("%.5f"%m for m in map(np.median, snps[i]))))
         # print mean +- stdev
-        out.write("#snp mean +- stdev\t%s\n"%"\t".join(names))
+        out.write("\n#snp mean +- stdev\t%s\n"%"\t".join(names))
         for i, snp in enumerate(id2snp):
             means = map(np.mean, snps[i])
             stdev = map(np.std, snps[i])
             out.write("%s\t%s\n"%(snp[:-1], "\t".join("%.5f +-%.5f"%(m, s) for m, s in zip(means, stdev))))
-        outfn = "%s.violin_plot.%s"%(fn, o.ext)
+        outfn = "%s.violin_plot.%sx.%s.%s_reads.%s"%(fn, o.minDepth, o.minAltFreq, o.minAltReads, o.ext)
         violin_plot(outfn, snps, names, id2snp, o.xmax)
         sys.stderr.write("[INFO] Violin plot saved as: %s\n"%outfn)
 
