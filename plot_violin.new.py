@@ -33,7 +33,9 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
     """
     # process snps
     snps, names = [], []
-    for i, l in enumerate(gzip.open(fname)): 
+    k = 0
+    for i, l in enumerate(gzip.open(fname)):
+        stored = False
         ldata = l[:-1].split('\t')
         if l.startswith('#'):
             if l.startswith('#chr'):
@@ -42,7 +44,7 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
                 snps = [[[] for n in names] for _i in range(len(id2snp))]
             continue
         # print info
-        if log and not i%10000: log.write(" %s \r"%i)
+        if log and not i%10000: log.write(" %s processed with %s stored    \r"%(i, k))
         #if i>20000: break    
         if l[-1]!='\n':
             log.write("[WARNING] Interrupting due to corrupted line: %s\n"%l)
@@ -77,6 +79,9 @@ def load_snps(fname, snp2id, id2snp, eid=-2, dbSNP={}, minDepth=10, minFreq=0.00
                 if freq<minFreq or snptmp%index2base[bi] not in snp2id: continue
                 # store
                 snps[snp2id[snptmp%index2base[bi]]][ii].append(freq)
+                stored = 1
+        # count stored
+        if stored: k+=1
 
     return snps, names
 
