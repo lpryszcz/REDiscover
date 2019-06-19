@@ -264,6 +264,10 @@ def load_bed(fname):
                 ref, se = ldata[0].split(':')
                 start, end = se.split('-')
             start, end = map(int, (start, end))
+            # this is fix for wrongly formatted bed files
+            if start>end:
+                sys.stderr.write("[WARNING][load_bed] Start position is smaller than end position at %s\n"%l[:-1])
+                start, end = end, start
             yield ref, start, end
     else:
         ref, se = fname.replace(',','').split('\t')[0].split(':')
