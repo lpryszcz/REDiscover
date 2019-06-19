@@ -156,6 +156,7 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
     mutual_info = np.zeros(len(pos))
     if len(pos)<2: return mutual_info
     start, end = pos[0], pos[-1]+1
+    print(bams)
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
     pairs = [{} for bam in bams]
     posset = set(pos)
