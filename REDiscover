@@ -259,7 +259,7 @@ def load_bed(fname):
                 continue
             ldata = l[:-1].replace(',','').split('\t')#; print ldata
             if len(ldata) >= 3:
-                ref, start, end = ldata
+                ref, start, end = ldata[:3]
             else:
                 ref, se = ldata[0].split(':')
                 start, end = se.split('-')
