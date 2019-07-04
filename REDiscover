@@ -26,7 +26,7 @@ from FastaIndex import FastaIndex
 from bam2strandness import bam2strandness, is_antisense, is_qcfail, is_duplicate
 
 VERSION = '1.30a'
-alphabet = "ACGTidse" # i=insertion d=deletion s=read_start e=read_end
+alphabet = "ACGTidse" 
 base2name = {"A": "A", "C": "C", "G": "G", "T": "T",
              "i": "insertions", "d": "deletions",
              "s": "read_starts", "e": "read_ends"}
@@ -55,10 +55,10 @@ code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
 
 def store_blocks(a, start, end, baseq, i, calls):
     """Store base calls from aligned blocks. INDEL aware."""
-    # store start & end counts - only if not soft-clipped
-    if a.cigar[0][0]!=4:
+    # store start & end counts - only if not soft-clipped and if withing calls (could be another block)
+    if a.cigar[0][0]!=4 and 0<=a.pos-start<calls.shape[0]:
         calls[a.pos-start, i, 6] += 1
-    if a.cigar[-1][0]!=4:
+    if a.cigar[-1][0]!=4 and 0<=a.aend-start<calls.shape[0]:
         calls[a.aend-start-1, i, 7] += 1
     # process read blocks and store bases counts and indels as well
     readi, refi = 0, a.pos
