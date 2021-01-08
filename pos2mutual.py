@@ -2,7 +2,7 @@
 desc="""Calculate mutual information between likely edited sites (REDiscover output). 
 
 TBA:
-- still having problem if there is low freq mis-alignment and true modif
+- still having problem if there is low freq mis-alignment and true motif
 ie. rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:272 A>CG. C is mis-alignment, but G is true editing.
 - modifications with RT signature up-/down-stream
 ie. K0 P-1 rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:745     G>ACTd. 0.607   743     0.017;0.020;0.074;0.061
@@ -10,7 +10,7 @@ ie. K0 P-1 rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:745     G>ACTd. 0.6
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
 
-Warsaw, 6/12/2017
+Warsaw/Mizerow, 6/12/2017
 """
 
 import os, sys, pysam, resource, zlib, gzip
@@ -25,14 +25,14 @@ def header2bams(handle, out=None):
     """Retrieve bam fnames and strandness"""
     header = []
     for l in handle:
-        if not l.startswith('##'):
+        if not l.startswith('#'):
             if out:
                 out.write("%s\tmutual information\t%s"%('\t'.join(l.split('\t')[:3]), '\t'.join(l.split('\t')[3:])))
             break
         if out:
             out.write(l)
-        header.append(l[3:-1])
-    return header[1].split(), header[2].split()  
+        header.append(l[:-1].split()[3:])
+    return header[-3], header[-2]
 
 def chr2pos(handle, out=sys.stdout, window=10000): 
     """Load editing candidates"""
@@ -129,7 +129,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5, posi=2203):
         if mi>mutual_info[j]: mutual_info[j] = mi
     return mutual_info
 
-def clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order):
+def clean_calls(bams, calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order):
     """Remove empty rows from calls to store new reads."""
     if iread>=maxdepth:
         logger("  cleaning cache (%s:%s)..."%(ref, pos[p]))
@@ -156,7 +156,7 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
     mutual_info = np.zeros(len(pos))
     if len(pos)<2: return mutual_info
     start, end = pos[0], pos[-1]+1
-    print(bams)
+    #print(bams)
     sams = [pysam.AlignmentFile(bam).fetch(ref, start, end) for bam in bams]
     pairs = [{} for bam in bams]
     posset = set(pos)
@@ -183,14 +183,14 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
                     pairs[sami][a.qname] = iread
                     iread += 1
                 # make sure not too many reads
-                calls, pairs, iread = clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
+                calls, pairs, iread = clean_calls(bams, calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
                 
         # calculate mutual info
         while a.pos>pos[p]:
             mutual_info = update_mutual_info(mutual_info, calls, p, pos)
             p += 1
         # make sure not too many reads
-        calls, pairs, iread = clean_calls(calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
+        calls, pairs, iread = clean_calls(bams, calls, pairs, ref, pos, p, iread, minfree, maxdepth, dtype, order)    
         if not pa:
             break
     # calculate mutual info
@@ -210,7 +210,7 @@ def combine_lines(lines):
         # store new snp
         if strand not in strand2snps:
             strand2snps[strand] = ldata[:2] + [snp[:-1]] + ldata[3:]
-        else:
+        elif snp[-2] not in strand2snps[strand][2]: #else:
             # add alt allele
             strand2snps[strand][2] += snp[-2]
             # add freq
@@ -228,7 +228,7 @@ def line_generator(handle):
     pchrom = pp = ''
     lines = []
     for l in handle:
-        if l.startswith('#'):
+        if l.startswith(('#', 'chromosome\tposition')):
             continue
         # get chrom and pos
         chrom, p = l[:-1].split("\t")[:2]
@@ -256,7 +256,7 @@ def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, ve
 
     # parse header 
     handle = gzip.open(fname)
-    bams, strands = header2bams(handle, out)
+    bams, strands = header2bams(handle, out)#; print(bams, strands)
     # process
     if threads<2:
         import itertools
@@ -265,7 +265,7 @@ def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, ve
         p = Pool(threads)
         
     logger("Processing chromosomes...")
-    mutual_info = []    
+    mutual_info = []
     for outdata in p.imap(worker, [(bams, ref, pos, mapq, bcq, maxcov) for ref, pos in chr2pos(handle)]):
         mutual_info += list(outdata)
     #logger("Saving...")

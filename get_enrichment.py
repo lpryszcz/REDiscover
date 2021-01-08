@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 desc="""Return enrichment of various types of editing
 """
 epilog="""Author:
@@ -16,6 +16,7 @@ bases = "ACGT"
 strands = "+-"
 bins = 20
 base2rc= {"A": "T", "T": "A", "C": "G", "G": "C", ">": ">", "+": "-", "-": "+"}
+base2idx = {b: i for i, b in enumerate(bases)}
 
 def _is_antisense(snps):
     """Return true if snps truly antisense"""
@@ -39,15 +40,16 @@ def get_counts(l):
             c += cov * freq
     return c
 
-def clean_cluster(cluster, minFreq=0.67):
+def clean_cluster(cluster, minFreq=0.501):
     # make sure if clean cluster - remove low freq SNPs
     c = Counter(c[-1] for c in cluster)
     if len(c)>1:
         snp, snpi = c.most_common(1)[0]
+        #this causes problems - but why?
         if 1.*snpi/len(cluster) < minFreq:
-            #print "lowfreq cluster", c, "%s:%s"%cluster[0][2:4]#, cluster
+            #print("lowfreq cluster", c, "%s:%s"%cluster[0][2:4])#, cluster
             return []
-        #print "filtering only %s"%snp, c, "%s:%s"%cluster[0][2:4]#cluster
+        #print("filtering only %s"%snp, c, "%s:%s"%cluster[0][2:4])#cluster
         cluster = filter(lambda x: x[-1]==snp, cluster)
     return cluster
     
@@ -64,6 +66,7 @@ def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples
             # skip if not antisense snps meaning only A>G+ and A>G- allowed, but not A>G+ and A>C-
             if not _is_antisense(snps):
                 continue
+            #print(snps)
             counts = [get_counts(l) for l, passed, chrom, pos, snp in snps]
             maxi = np.argmax(counts)#; print counts, maxi
             l, passed, chrom, pos, snp = snps[maxi]
@@ -108,14 +111,17 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
     ppos, snps = '', []
     for l in handle: 
         ldata = l[:-1].split('\t')
-        if l.startswith('#') or not l.endswith('\n') or len(ldata)<3:
+        if l.startswith("#") or not l.endswith('\n') or len(ldata)<3: continue
+        elif l.startswith('chromosome\tposition'):
+            samples = [s.split()[0] for s in ldata[4:8]]
             for out in outs.itervalues():
-                out.write(l)
+                out.write("chrom\tpos\tvar\tmi\t%s\n"%"\t".join("%s cov\t%s freq"%(s, s) for s in samples))
             continue
         chrom, pos, snp = ldata[:3]
         # no mutual info    
         if len(ldata)%2:
             gi = 3
+            mi = "-"
         else:
             gi = 4
             mi = float(ldata[3])
@@ -133,12 +139,24 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         # skip if present in dbSNP
         if chrom in dbSNP and int(pos) in dbSNP[chrom]:
             continue
-        sampledata = np.array(map(float, [max(map(float, f.split(';'))) for f in ldata[gi:]])).reshape(len(ldata[gi:])/2, 2)
-        # enough depth, frequency and more than 3 reads in alt allele    
-        passed = sum((sampledata[:, 0]>=minDepth) & (sampledata[:, 1]>=minFreq) \
-                     & (sampledata[:, 0]*sampledata[:, 1]>=minAltReads))
-        # store
-        snps.append((l, passed, chrom, pos, snp))
+        # get A, C, G & T counts
+        ref = snp[0]
+        strand = snp[-1]
+        refi = base2idx[ref] # this column is reference, thus will be skipped
+        sampledata = np.array(map(float, ldata[gi:])).reshape(-1, 8)[:, :4]#; print(sampledata)
+        cov = sampledata.sum(axis=1)#; print(cov)
+        for alt in snp[2:-1]:
+            # skip indels
+            if alt not in base2idx: continue 
+            alti = base2idx[alt]
+            freq = sampledata[:, alti] / cov#; print(chrom, pos, snp, alt, freq)
+            # enough depth, frequency and more than 3 reads in alt allele
+            passed = sum((cov>=minDepth) & (freq>=minFreq) & (sampledata[:, alti]>=minAltReads))#; print(passed)
+            # "\t".join(map(str, ["%.3f"%f for f in freq]))
+            sinfo = "\t".join(map(str, ["%i\t%.3f"%(c, f) for c, f in zip(cov, freq)]))
+            newl = "%s\t%s\t%s>%s%s\t%s\t%s\n"%(chrom, pos, ref, alt, strand, mi, sinfo)#; print(newl)
+            # store
+            snps.append((newl, passed, chrom, pos, snp))
 
     if snps:
         yield snps
@@ -184,10 +202,10 @@ def get_enrichment(fnames, dbSNP, minDepth, minAltfreq=.01, minAltReads=3, minsa
                 snps[chrom] = _snps[chrom]
             else:
                 snps[chrom] = snps[chrom].union(_snps[chrom])
-    print "%s SNPs loaded in total."%sum(map(len, snps.itervalues()))
+    print("%s SNPs loaded in total."%sum(map(len, snps.itervalues())))
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
-    print "#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes)
+    print("#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes))
     # process all files
     editing = {}
     for fn in fnames:
@@ -196,7 +214,8 @@ def get_enrichment(fnames, dbSNP, minDepth, minAltfreq=.01, minAltReads=3, minsa
         else:
             handle = open(fn)
         
-        minSamplesSNP2c, outs = txt2changes_noclusters(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, mimax, dist)
+        #minSamplesSNP2c, outs = txt2changes_noclusters(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, mimax, dist)
+        minSamplesSNP2c, outs = txt2changes(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, mimax, dist)
 
         for n in sorted(minsamples):
             snp2c = minSamplesSNP2c[n]
@@ -215,7 +234,7 @@ def get_enrichment(fnames, dbSNP, minDepth, minAltfreq=.01, minAltReads=3, minsa
                 strands.append((snp2c[snp], snp2c[snp[:-1]+"-"]))
             strands = np.array(strands, dtype="float32")
             frac = sum(strands.max(axis=1))/strands.sum()
-            print "%s %s\t%s\t%s\t%s"%(fn, n, total, frac, "\t".join(map(str, freqs)))
+            print("%s %s\t%s\t%s\t%s"%(fn, n, total, frac, "\t".join(map(str, freqs))))
 
 def main():
     import argparse

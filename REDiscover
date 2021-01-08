@@ -108,7 +108,7 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False)
         if ref.startswith('chr') and ref[3:] in sam.references:
             ref = ref[3:]
         elif 'chr%s'%ref in sam.references:
-            ref = 'chr%s'%ref
+            ref = 'chr%s'%refgg
         else:
             return calls
     pa = None

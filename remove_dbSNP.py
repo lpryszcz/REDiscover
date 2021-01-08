@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # Strip snps present in dbSNP
 # USAGE: remove_dbSNP.py 00-common_all.vcf.gz file1 [file2 ... fileN]
 
@@ -9,7 +9,7 @@ def load_dbSNP(vcf, add_chr=1):
     # load pickle
     if os.path.isfile(vcf+".pickle"):
         snps=pickle.load(open(vcf+".pickle"))
-        print "Loaded %s SNPs from %s"%(sum(map(len, snps.values())), vcf)
+        print("Loaded %s SNPs from %s"%(sum(map(len, snps.values())), vcf))
         return snps
     
     snps = {}
