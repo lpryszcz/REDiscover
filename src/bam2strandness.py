@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 desc="""Calculate strandness for each bam
 """
 epilog="""Author:
@@ -11,7 +11,6 @@ import os, sys, pysam, random, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
-#from REDiscover import is_antisense, is_qcfail
 
 def is_antisense(a):
     """Return 1 if read pair is from antisense strand,
@@ -51,7 +50,7 @@ def load_exons(fname, verbose=0):
         os.system(cmd1); os.system(cmd2); os.system(cmd3)
         
     regions = []
-    for l in open(uniqexons):
+    for l in open(uniqexons, "rt"):
         if l.startswith('#'):
             continue
         ref, start, end, strand = l[:-1].split('\t')[:4]
@@ -87,10 +86,10 @@ def get_strandness(bam, regions, mapq, verbose):
                     i = 1
                 strandness[i] += 1
         # save
-        with open(outfn, "w") as out:
+        with open(outfn, "wt") as out:
             out.write("%s\t%s\n"%tuple(strandness))
     else:
-        strandness = map(int, open(outfn).readline().split('\t')[:2])
+        strandness = list(map(int, open(outfn, "rt").readline().split('\t')[:2]))
         
     freq = 0.
     if sum(strandness):
@@ -159,9 +158,9 @@ def main():
     if o.verbose:
         sys.stderr.write("Options: %s\n"%str(o))
 
-    print "#fname\tno. of reads sampled\tfraction of reads from sense strand"
+    print("#fname\tno. of reads sampled\tfraction of reads from sense strand")
     for data in bam2strandness(o.bam, o.gtf, o.mapq, o.subset, o.threads, o.verbose):
-        print "\t".join(map(str, data))
+        print("\t".join(map(str, data)))
 
 if __name__=='__main__': 
     t0 = datetime.now()

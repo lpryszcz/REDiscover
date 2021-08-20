@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # Strip snps present in dbSNP
 # USAGE: remove_dbSNP.py 00-common_all.vcf.gz file1 [file2 ... fileN]
 
@@ -28,7 +28,7 @@ def load_dbSNP(vcf, add_chr=1):
             snps[chrom] = set()
         snps[chrom].add(int(pos))
         k += 1
-    print "Loaded %s out of %s SNPs"%(k, j)
+    print("Loaded %s out of %s SNPs"%(k, j))
     pickle.dump(snps, open(vcf+".pickle", "w"), 2)
     return snps
     
@@ -55,7 +55,7 @@ def main():
     
     snps = load_dbSNP(vcf)
 
-    print "#fname\tnot in dbSNP\tall"
+    print("#fname\tnot in dbSNP\tall")
     for fn in filter(lambda fn: not fn.endswith('.parsed.txt'), fnames):
         outfn = fn+".parsed.txt"
         # skip if outfn exists and newer than fn
@@ -63,7 +63,7 @@ def main():
             continue
         out = open(outfn, "w")
         j, k = parse_editing(fn, snps, out)
-        print "\t".join(map(str, (fn, k, j)))
+        print("\t".join(map(str, (fn, k, j))))
     
 if __name__=="__main__":
     main()

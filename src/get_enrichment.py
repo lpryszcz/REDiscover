@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 desc="""Return enrichment of various types of editing
 """
 epilog="""Author:
@@ -92,7 +92,7 @@ def get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples
 def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3, \
                 minSamples=[3], mimax=1.0, dist=30, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
-    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
+    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "wt") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
     validSNPs = set(snp2c[minSamples[0]].keys())
     for cluster in get_clusters(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, mimax, validSNPs, dist):
@@ -102,7 +102,7 @@ def txt2changes(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3
                 snp2c[n][snp] += 1
                 outs[n].write(l)
     # close outs
-    for out in outs.itervalues():
+    for out in outs.values():
         out.close()
     return snp2c, outs
 
@@ -113,8 +113,8 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         ldata = l[:-1].split('\t')
         if l.startswith("#") or not l.endswith('\n') or len(ldata)<3: continue
         elif l.startswith('chromosome\tposition'):
-            samples = [s.split()[0] for s in ldata[4:8]]
-            for out in outs.itervalues():
+            samples = [s.split()[0] for s in ldata[4::8]]#; print(samples); sys.exit()
+            for out in outs.values():
                 out.write("chrom\tpos\tvar\tmi\t%s\n"%"\t".join("%s cov\t%s freq"%(s, s) for s in samples))
             continue
         chrom, pos, snp = ldata[:3]
@@ -125,11 +125,9 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         else:
             gi = 4
             mi = float(ldata[3])
-            if mimax and mi>mimax:
-                continue
+            if mimax and mi>mimax: continue
         if ppos!=pos:
-            if snps:
-                yield snps
+            if snps: yield snps
             ppos, snps = pos, []
         # unstranded
         if snp[-1] == ".":
@@ -137,13 +135,12 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         if not chrom.startswith('chr'):
             chrom = "chr%s"%chrom
         # skip if present in dbSNP
-        if chrom in dbSNP and int(pos) in dbSNP[chrom]:
-            continue
+        if chrom in dbSNP and int(pos) in dbSNP[chrom]: continue
         # get A, C, G & T counts
         ref = snp[0]
         strand = snp[-1]
         refi = base2idx[ref] # this column is reference, thus will be skipped
-        sampledata = np.array(map(float, ldata[gi:])).reshape(-1, 8)[:, :4]#; print(sampledata)
+        sampledata = np.array(list(map(float, ldata[gi:]))).reshape(-1, 8)[:, :4]#; print(sampledata)
         cov = sampledata.sum(axis=1)#; print(cov)
         for alt in snp[2:-1]:
             # skip indels
@@ -164,7 +161,7 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
 def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, minAltReads=3,
                            minSamples=[3], mimax=1.0, dist=0, template="%s>%s%s"):
     """Return dictionary of snps and their occurencies"""
-    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "w") for n in minSamples}
+    outs = {n: gzip.open(handle.name+".n%s.gz"%n, "wt") for n in minSamples}
     snp2c = {n: {template%(a, b, s): 0 for a in bases for b in bases for s in strands if a!=b} for n in minSamples}
     for snps in parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples, mimax):
         # skip mulit-SNP
@@ -188,7 +185,7 @@ def txt2changes_noclusters(editing, handle, dbSNP, minDepth=20, minFreq=0.01, mi
             if snp in snp2c[minSamples[0]]:
                 snp2c[n][snp] += 1
     # close outs
-    for out in outs.itervalues():
+    for out in outs.values():
         out.close()
     return snp2c, outs     
 
@@ -202,24 +199,22 @@ def get_enrichment(fnames, dbSNP, minDepth, minAltfreq=.01, minAltReads=3, minsa
                 snps[chrom] = _snps[chrom]
             else:
                 snps[chrom] = snps[chrom].union(_snps[chrom])
-    print("%s SNPs loaded in total."%sum(map(len, snps.itervalues())))
+    print("%s SNPs loaded in total."%sum(map(len, snps.values())))
         
     snptypes = ["%s>%s"%(a, b) for a in bases for b in bases if a!=b]
     print("#fname\tsites\tstrand enrichment\t"+"\t".join(snptypes))
     # process all files
     editing = {}
     for fn in fnames:
-        if fn.endswith('.gz'):
-            handle = gzip.open(fn)            
-        else:
-            handle = open(fn)
+        if fn.endswith('.gz'): handle = gzip.open(fn, "rt")
+        else: handle = open(fn, "rt")
         
         #minSamplesSNP2c, outs = txt2changes_noclusters(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, mimax, dist)
         minSamplesSNP2c, outs = txt2changes(editing, handle, snps, minDepth, minAltfreq, minAltReads, minsamples, mimax, dist)
 
         for n in sorted(minsamples):
             snp2c = minSamplesSNP2c[n]
-            total = sum(snp2c.itervalues())
+            total = sum(snp2c.values())
             # unlink outfile if not snps
             if not total:
                 os.unlink(outs[n].name)

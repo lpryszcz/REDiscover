@@ -1,9 +1,9 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 desc="""Identify differential RNA editing sites from multiple RNAseq experiments (.bam).
 
-Dependencies: pysam numpy fastaindex matplotlib pandas
+Dependencies: pysam numpy matplotlib pandas
 
-TBA:
+TBD:
 - cap at some max coverage ie. 800X
 - maybe instead of processing individual reads, I could preload all reads from the region
 and parse through them yielding one base at a time?
@@ -21,19 +21,17 @@ import gzip, os, sys, pysam, resource, zlib
 from datetime import datetime
 from multiprocessing import Pool
 import numpy as np
-from itertools import izip
-from FastaIndex import FastaIndex
 from bam2strandness import bam2strandness, is_antisense, is_qcfail, is_duplicate
 
-VERSION = '1.30a'
-alphabet = "ACGTidse" 
+VERSION = '1.0a'
+alphabet = "ACGT" #idse" 
 base2name = {"A": "A", "C": "C", "G": "G", "T": "T",
              "i": "insertions", "d": "deletions",
              "s": "read_starts", "e": "read_ends"}
 base2index = {b: i for i, b in enumerate(alphabet)}
-for i, b in enumerate(alphabet.lower()):
-    base2index[b] = i
+for i, b in enumerate(alphabet.lower()): base2index[b] = i
 
+'''
 # CIGAR operations
 """Op BAM Description +1Q +1R
 M 0 alignment match (can be a sequence match or mismatch) yes yes
@@ -93,14 +91,13 @@ def store_blocks(a, start, end, baseq, i, calls):
 def name2barcode(name):
     """Return barcode from read name"""
     return name.split(".")[0]
-    
-def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False):
+
+def bam2calls_old(sam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False):
     """Return 3D array of basecalls from BAM file, as follows:
     - 1D positions from start to end of the ref
     - 2D sense and antisense strand
     - 3D base counts for ACGTidse
     """
-    sam = pysam.AlignmentFile(bam)
     # position, strand, ACGTid
     calls = np.zeros((end-start+1, 2, len(alphabet)), dtype="int64")#; print(calls.shape)
     # stop if ref not in sam file
@@ -135,44 +132,69 @@ def bam2calls(bam, stranded, ref, start, end, mapq=15, baseq=20, barcoded=False)
         # store alignment blocks
         calls = store_blocks(a, start, end, baseq, i, calls)
     return calls
-    
-def get_combined_calls(bams, ref, start, end, mapq, baseq, stranded, bam2calls):
-    """Combine basecalls from several files""" 
-    parsers = (bam2calls(bam, stranded, ref, start, end, mapq, baseq) for bam in bams) 
-    for call in np.sum(parsers, axis=0):
-        if stranded:
-            yield (call[0], call[1])
-        else:
-            yield call[0] + call[1]
+'''
 
-def fasta2calls(fastafn, ref, start, end, cov=100):
+def bam2calls(sam, stranded, ref, start, end, mapq, baseq, barcoded=False):
+    """Return 3D array of basecalls from BAM file, as follows:
+    - 1D positions from start to end of the ref
+    - 2D sense and antisense strand
+    - 3D base counts for alphabet
+
+    Note, this doesn't report insertions, deletions, reads starts and ends, 
+    and doesn't support UMI, but it's more than 10x faster than bam2calls_old. 
+    """
+    def is_positive(a): return not is_qcfail(a) and not is_antisense(a)
+    def is_negative(a): return not is_qcfail(a) and is_antisense(a)
+
+    if stranded=="firststrand": is_positive, is_negative = is_negative, is_positive
+    else: is_positive, is_negative = is_positive, is_negative
+    
+    calls = np.zeros((end-start, 2, len(alphabet)), dtype="uint16")
+    calls[:, 0, :4] = np.array(sam.count_coverage(ref, start, end, quality_threshold=baseq,
+                                                  read_callback=is_positive)).T
+    calls[:, 1, :4] = np.array(sam.count_coverage(ref, start, end, quality_threshold=baseq,
+                                                  read_callback=is_negative)).T
+    return calls
+
+def get_combined_calls(sams, ref, start, end, mapq, baseq, stranded, bam2calls):
+    """Combine basecalls from several files""" 
+    parsers = (bam2calls(sam, stranded, ref, start, end, mapq, baseq) for sam in sams) 
+    for call in np.sum(parsers, axis=0):
+        if stranded: yield (call[0], call[1])
+        else: yield call[0] + call[1]
+
+def fasta2calls(faidx, ref, start, end, cov=100):
     """Return list of basecalls from FastA file."""
-    fasta = pysam.FastaFile(fastafn)
-    if ref not in fasta.references:
-        raise StopIteration
-    for b in fasta.fetch(ref, start, end):
-        call = [0]*len(alphabet)
-        if b in base2index:
-            call[base2index[b]] += cov
-        yield call
-            
-def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, minAltReads,
+    if ref not in faidx: raise StopIteration
+    calls = np.zeros((end-start, len(alphabet)))
+    seq = faidx.fetch(ref, start, end).upper()
+    for p, b in enumerate(seq):
+        if b in base2index: calls[p, base2index[b]] += cov
+        yield calls[p]
+    
+def diff_editing(position, fasta, minDepth, minDNAfreq, minAltfreq, minAltReads,
                  stranded, mapq, baseq, barcoded, allpositions, verbose):
-    """Return RNA editing positions"""
+    """Return RNA editing positions
+
+    Note, dna_sams [pysam.AlignmentFile(bam) for bam in dna] 
+    and sams [pysam.AlignmentFile(bam) for bam in rna] 
+    are provided as global vars to save time (~0.5s per region). 
+    """
     # define strands - strands from individual files are handled by bam2calls
-    if not stranded[0]:
-        strands = "." # unstranded
-    else:
-        strands = "+-"
+    if not stranded[0]: strands = "." # unstranded
+    else: strands = "+-"
     info = []
     ref, start, end = position
     start -= 1 # here pos should be 0-based, but 1-based in output
-    if dna:
-        refparser = get_combined_calls(dna, ref, start, end, mapq, baseq, 0, bam2calls)
+    if dna_sams:
+        refparser = get_combined_calls(dna_sams, ref, start, end, mapq, baseq, 0, bam2calls)
     else:
-        refparser = fasta2calls(fasta, ref, start, end)
-    parsers = [bam2calls(bam, _stranded, ref, start, end, mapq, baseq, barcoded) for bam, _stranded in zip(bams, stranded)]
-    for pos, calls in enumerate(izip(refparser, *parsers), start+1):
+        #faidx = pysam.FastaFile(fasta)
+        refparser = fasta2calls(faidx, ref, start, end)
+    #sams = [pysam.AlignmentFile(bam) for bam in bams]
+    parsers = [bam2calls(sam, _stranded, ref, start, end, mapq, baseq, barcoded)
+               for sam, _stranded in zip(sams, stranded)]
+    for pos, calls in enumerate(zip(refparser, *parsers), start+1):
         refcall, bamcalls = calls[0], np.array(calls[1:])#; print pos, calls
         # low dna coverage ie. N
         refcov = sum(refcall)
@@ -191,18 +213,15 @@ def diff_editing(position, fasta, dna, bams, minDepth, minDNAfreq, minAltfreq, m
         for si, strand in enumerate(strands):
             # skip if low coverage in all samples
             coverage = bamcalls[:, si].sum(axis=1)
-            if not allpositions and coverage.max() < minDepth:
-                continue
+            if not allpositions and coverage.max() < minDepth: continue
             # process alt bases
             altbases = []
-            for bi, base in enumerate(alphabet[:6]):
+            for bi, base in enumerate(alphabet[:4]): #:6
                 # skip reference and if less than 3 reads per allele
-                if bi==refi or bamcalls[:, si, bi].max()<minAltReads:
-                    continue
+                if bi==refi or bamcalls[:, si, bi].max()<minAltReads: continue
                 # store if freq of at least one larger than minfreq
                 freqs = 1.* bamcalls[:, si, bi] / coverage
-                if np.nanmax(freqs) >= minAltfreq:
-                    altbases.append(base)
+                if np.nanmax(freqs) >= minAltfreq: altbases.append(base)
             if altbases or allpositions:
                 text = "%s\t%s\t%s>%s%s\t%s\n"%(ref, pos, refbase, "".join(altbases), strand, 
                                                 "\t".join("\t".join(map(str, bamcalls[i, si]))
@@ -221,52 +240,53 @@ def worker_coverage(args):
     """return coverage"""
     bam, ref, mapq = args
     sam = pysam.Samfile(bam)
-    ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}
-    coverage = np.zeros(ref2len[ref], dtype='uint16')
+    ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}    
+    return get_coverage(sam, ref, mapq, ref2len[ref])
+
+def get_coverage(sam, ref, mapq, rlen):
+    coverage = np.zeros(rlen, dtype='uint16')
     for a in sam.fetch(reference=ref):
         if is_qcfail(a, mapq): continue
-        # for some reason no blocks for LAST output
         if a.blocks:
-            for s, e in a.blocks:
-                coverage[s:e] += 1
-        else:
-            coverage[a.pos:a.aend] += 1
+            for s, e in a.blocks: coverage[s:e] += 1
+        else: coverage[a.pos:a.aend] += 1
     return coverage
 
 def get_consecutive(data, stepsize=1):
     """Return consecutive windows allowing given max. step size"""
     return np.split(data, np.where(np.diff(data) > stepsize)[0]+1)
 
-def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], verbose=0,  maxdist=16000, step=100000):
+def get_covered_regions_per_bam(bams, mincov=3, mapq=15, threads=4, chrs=[], verbose=0,
+                                maxdist=100, step=10000):
     """Return chromosome regions covered by at least mincov."""
-    p = Pool(threads)
-    sam = pysam.Samfile(bams[0])
+    sams = [pysam.AlignmentFile(bam, threads=threads) for bam in bams]
+    sam = sams[0]
     references, lengths = sam.references, sam.lengths
+    ref2len = {r: l for r, l in zip(sam.references, sam.lengths)}    
     for ref, length in zip(references, lengths):
         if chrs and ref not in chrs:
             if verbose:
                 sys.stderr.write(" skipped %s\n"%ref)
             continue
         coverage = np.zeros(length, dtype='uint16')
-        for _coverage in p.imap_unordered(worker_coverage, [(bam, ref, mapq) for bam in bams]):
-            coverage = np.max([coverage, _coverage], axis=0)
+        for sam in sams:
+            coverage = np.max([coverage, get_coverage(sam, ref, mapq, length)], axis=0)
         # get regions with coverage
         covered = np.where(coverage>=mincov)[0]
         for positions in get_consecutive(covered, maxdist):
             if len(positions)<1:
                 continue
             s, e = positions[0]+1, positions[-1]+1
-            # further split regions for max 1M windows
+            # further split regions for max step size separated by maxdist
             while s < e-step:
                 yield ref, s, s+step
                 s += step
             yield ref, s, e
-    #p.terminate()
     
 def load_bed(fname):
     """Return regions from BED file"""
     if os.path.isfile(fname):
-        for l in open(fname):
+        for l in open(fname, "rt"):
             if l.startswith('#') or not l[:-1]:
                 continue
             ldata = l[:-1].replace(',','').split('\t')#; print ldata
@@ -282,11 +302,19 @@ def load_bed(fname):
         start, end = se.split('-')
         start, end = map(int, (start, end))
         yield ref, start, end
-            
+
+def init_args(*args):
+    """Share globals with pool of workers"""
+    global sams, faidx, dna_sams
+    bams, fasta, dna = args
+    sams = [pysam.AlignmentFile(bam) for bam in bams]
+    dna_sams = [pysam.AlignmentFile(bam) for bam in dna]
+    faidx = pysam.FastaFile(fasta)
+        
 def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, minAltReads, 
                              stranded, mapq, bcq, threads, barcoded, allpositions, verbose, chrs):
     """Get alternative base coverage and frequency for every bam file"""
-    out = gzip.open(outfn, "w")
+    out = gzip.open(outfn, "wt")
     header  = "##\n# REDiscover (ver. %s)\n"%VERSION
     header += "#\n# If you have any suggestions or questions, please use https://github.com/lpryszcz/REDiscover/issues \n##\n"
     header += "# command: %s\n"%" ".join(sys.argv)
@@ -303,19 +331,15 @@ def get_differential_editing(outfn, regionsfn, fasta, dna, rna, minDepth, minDNA
     else:
         regions = get_covered_regions_per_bam(rna, minDepth, mapq, threads, chrs, verbose) 
       
-    if threads<2: 
-        import itertools
-        p = itertools
-    else:
-        p = Pool(threads)#, maxtasksperchild=20)
-        
+    p = Pool(threads, initializer=init_args, initargs=(rna, fasta, dna), maxtasksperchild=1000)
     i = 0
-    parser = p.imap(worker, ((pos, fasta, dna, rna, minDepth, minDNAfreq, minAltfreq, minAltReads, stranded, mapq, bcq, barcoded, allpositions, verbose) for pos in regions)) #_unordered , chunksize=10
+    parser = p.imap(worker, ((pos, fasta, minDepth, minDNAfreq, minAltfreq, minAltReads, stranded, mapq, bcq, barcoded, allpositions, verbose) for pos in regions)) #_unordered , chunksize=10
     for i, data in enumerate(parser, 1):
         out.write(data)
             
     logger("%s regions processed"%i)
     out.close()
+    p.close()
 
 def compute_strandness(rna, gtf, mapq, threads, verbose, subset=0.01, limit=0.66):
     """Compute strandness"""
@@ -434,7 +458,7 @@ def main():
         os.makedirs(os.path.dirname(o.out))
         
     # calculate differential editing if file doesn't exist
-    if os.path.isfile(o.out) and open(o.out).readline():
+    if os.path.isfile(o.out) and open(o.out, "rb").readline():
         sys.stderr.write("Outfile exists or not empty: %s\n"%o.out)
     else:
         # check if all input files exists
@@ -451,10 +475,6 @@ def main():
                     sys.stderr.write(" %s\n"%cmd)
                 os.system(cmd)
 
-        # load fasta
-        if o.fasta:
-            FastaIndex(o.fasta)
-
         # mark stranded protocol
         if o.gtf and not o.unstranded:
             logger("Detecting strandness in BAMs...")
@@ -465,7 +485,7 @@ def main():
             o.stranded = ["firststrand"]*len(o.rna)
         else:
             o.stranded = [""]*len(o.rna)
-
+            
         # get differential editing
         get_differential_editing(o.out, o.regions, o.fasta, o.dna, o.rna, o.minDepth, o.minDNAfreq, o.minAltfreq, o.minAltReads, 
                                  o.stranded, o.mapq, o.bcq, o.threads, o.barcoded, o.allpositions, o.verbose, o.chrs)

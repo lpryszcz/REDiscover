@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 desc="""Calculate mutual information between likely edited sites (REDiscover output). 
 
 TBA:
@@ -15,7 +15,6 @@ Warsaw/Mizerow, 6/12/2017
 
 import os, sys, pysam, resource, zlib, gzip
 from datetime import datetime
-from itertools import izip
 from collections import Counter
 from multiprocessing import Pool
 import numpy as np
@@ -116,7 +115,7 @@ def update_mutual_info(mutual_info, calls, i, pos, minCommonReads=5, posi=2203):
         _match_bases(arr)
         # subsample so alt base is as freq as major allele
         ## get all mutual bases at two positions
-        c = Counter(izip(arr[0], arr[1]))
+        c = Counter(zip(arr[0], arr[1]))
         # count how many alternative bases
         altc = arr.shape[1] - c.most_common(1)[0][1]
         # get subset of major allele
@@ -218,7 +217,7 @@ def combine_lines(lines):
                 strand2snps[strand][i] += ";%s"%ldata[i]
     # combine snp info
     lines = []
-    for strand, l in strand2snps.iteritems():
+    for strand, l in strand2snps.items():
         l[2] += strand
         lines.append("\t".join(l)+"\n")
     return lines
@@ -249,13 +248,11 @@ def worker(args):
 
 def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, verbose=1, log=sys.stderr):
     """Filter out positions with high mutual info"""
-    if type(out) is str:
-        out = open(out, "w")
-    if out.name.endswith(".gz"):
-        out = gzip.open(out.name, "w")
+    if type(out) is str: out = open(out, "wt")
+    if out.name.endswith(".gz"): out = gzip.open(out.name, "wt")
 
     # parse header 
-    handle = gzip.open(fname)
+    handle = gzip.open(fname, "rt")
     bams, strands = header2bams(handle, out)#; print(bams, strands)
     # process
     if threads<2:
@@ -269,7 +266,7 @@ def pos2mutual(fname, out=sys.stdout, threads=4, mapq=15, bcq=20, maxcov=600, ve
     for outdata in p.imap(worker, [(bams, ref, pos, mapq, bcq, maxcov) for ref, pos in chr2pos(handle)]):
         mutual_info += list(outdata)
     #logger("Saving...")
-    for mi, lines in izip(mutual_info, line_generator(gzip.open(fname))):
+    for mi, lines in zip(mutual_info, line_generator(gzip.open(fname, "rt"))):
         for l in lines:
             out.write("%s\t%.3f\t%s"%("\t".join(l.split("\t")[:3]), mi, "\t".join(l.split("\t")[3:])))
     out.close()
