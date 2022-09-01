@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 desc="""Calculate mutual information between likely edited sites (REDiscover output). 
 
-TBA:
+TBD:
+- since we already captured all positions with variants, now we can focus only on those
+this should greatly speed up this step
 - still having problem if there is low freq mis-alignment and true motif
 ie. rRNA.LSU.23S.Escherichia_coli.prokaryotic_cytosol:272 A>CG. C is mis-alignment, but G is true editing.
 - modifications with RT signature up-/down-stream
@@ -88,7 +90,7 @@ def _match_bases(arr, verbose=0):
     """Return alphabet fitted between both positions"""
     b2a, a2b = {}, {}
     arr[1] += -len(alphabet)
-    c = Counter(tuple(arr[:, i]) for i in xrange(arr.shape[1]))
+    c = Counter(tuple(arr[:, i]) for i in range(arr.shape[1]))
     for (a, b), _c in c.most_common():
         if b not in b2a and a not in a2b:
             b2a[b] = a
@@ -150,7 +152,7 @@ def bams2mutual_info(bams, ref, pos, mapq=15, baseq=20, maxcov=600, dtype="int8"
     """Get mutual info from positions"""
     logger(" %s:%s-%s"%(ref, pos[0], pos[-1]))
     maxdepth = maxcov*(len(bams)+1)
-    minfree = maxdepth/10
+    minfree = int(maxdepth/10)
     calls = np.zeros((len(pos), maxdepth), dtype=dtype, order=order)
     mutual_info = np.zeros(len(pos))
     if len(pos)<2: return mutual_info

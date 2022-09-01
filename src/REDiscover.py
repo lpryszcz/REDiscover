@@ -5,11 +5,8 @@ Dependencies: pysam numpy matplotlib pandas
 
 TBD:
 - cap at some max coverage ie. 800X
-- maybe instead of processing individual reads, I could preload all reads from the region
-and parse through them yielding one base at a time?
 - process ref bam in the same filtering run
-- mutual information?
-- proper indel handling
+- optimise pos2mutual
 """
 epilog="""Author:
 l.p.pryszcz+git@gmail.com
@@ -31,7 +28,6 @@ base2name = {"A": "A", "C": "C", "G": "G", "T": "T",
 base2index = {b: i for i, b in enumerate(alphabet)}
 for i, b in enumerate(alphabet.lower()): base2index[b] = i
 
-'''
 # CIGAR operations
 """Op BAM Description +1Q +1R
 M 0 alignment match (can be a sequence match or mismatch) yes yes
@@ -50,7 +46,7 @@ def _deletion(refi, readi, bases): return refi+bases, readi, False
 def _skip(refi, readi, bases): return refi, readi, False
 code2function = {0: _match, 7: _match, 8: _match, 1: _insertion, 6: _insertion,
                  2: _deletion, 3: _deletion, 4: _insertion, 5: _skip}
-
+'''
 def store_blocks(a, start, end, baseq, i, calls):
     """Store base calls from aligned blocks. INDEL aware."""
     # store start & end counts - only if not soft-clipped and if withing calls (could be another block)

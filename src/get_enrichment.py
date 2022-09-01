@@ -113,7 +113,7 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         ldata = l[:-1].split('\t')
         if l.startswith("#") or not l.endswith('\n') or len(ldata)<3: continue
         elif l.startswith('chromosome\tposition'):
-            samples = [s.split()[0] for s in ldata[4::8]]#; print(samples); sys.exit()
+            samples = [s.split()[0] for s in ldata[4::4]]#; print(samples); sys.exit()
             for out in outs.values():
                 out.write("chrom\tpos\tvar\tmi\t%s\n"%"\t".join("%s cov\t%s freq"%(s, s) for s in samples))
             continue
@@ -140,7 +140,7 @@ def parser_diff(handle, dbSNP, outs, minDepth, minFreq, minAltReads, minSamples,
         ref = snp[0]
         strand = snp[-1]
         refi = base2idx[ref] # this column is reference, thus will be skipped
-        sampledata = np.array(list(map(float, ldata[gi:]))).reshape(-1, 8)[:, :4]#; print(sampledata)
+        sampledata = np.array(list(map(float, ldata[gi:]))).reshape(-1, 4)[:, :4]#; print(sampledata)
         cov = sampledata.sum(axis=1)#; print(cov)
         for alt in snp[2:-1]:
             # skip indels
